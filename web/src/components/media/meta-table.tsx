@@ -404,7 +404,11 @@ export function MetaTable({
           <Table.Thead>
             <Table.Tr>
               <Table.Th w={40}>
-                <Checkbox checked={allSelected} onChange={() => toggleAll(pageIds)} />
+                <Checkbox
+                  checked={allSelected}
+                  indeterminate={!allSelected && pageIds.some((id) => selected.has(id))}
+                  onChange={() => toggleAll(pageIds)}
+                />
               </Table.Th>
               {SORTABLE_COLUMNS.map((field) => (
                 <SortableTh

@@ -1,9 +1,19 @@
-import { ActionIcon, Badge, Group, SegmentedControl, Text, TextInput, Title } from "@mantine/core";
+import {
+  ActionIcon,
+  Alert,
+  Badge,
+  Button,
+  Group,
+  SegmentedControl,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
 import { IconFilter, IconSearch, IconTable, IconX } from "@tabler/icons-react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { createFileRoute, stripSearchParams } from "@tanstack/react-router";
 import type { ParseKeys } from "i18next";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   getFacetOptions,
@@ -16,6 +26,7 @@ import { HintedActionIcon } from "@/components/common/hinted-action-icon";
 import { InfiniteScrollSentinel } from "@/components/common/infinite-scroll-sentinel";
 import { ListDefaultActions } from "@/components/common/list-default-actions";
 import { PageSizeSelect } from "@/components/common/page-size-select";
+import { ScrollToTop } from "@/components/common/scroll-to-top";
 import { SortMenu } from "@/components/common/sort-menu";
 import { ActorFilterControls } from "@/components/media/actor-filter-controls";
 import { ActorGrid } from "@/components/media/actor-grid";
@@ -83,10 +94,17 @@ export const Route = createFileRoute("/actors/")({
 const GRID_CHUNK = 30;
 
 function ActiveFilterChip({ label, onClear }: { label: string; onClear: () => void }) {
+  const { t } = useTranslation("common");
   return (
     <Group gap={4} wrap="nowrap">
       <Badge variant="outline">{label}</Badge>
-      <ActionIcon size="sm" variant="subtle" color="gray" onClick={onClear} aria-label="clear">
+      <ActionIcon
+        size="sm"
+        variant="subtle"
+        color="gray"
+        onClick={onClear}
+        aria-label={t("actions.clear")}
+      >
         <IconX size={14} />
       </ActionIcon>
     </Group>
@@ -145,6 +163,9 @@ function ActorsIndexPage() {
     getNextPageParam: nextOffsetPageParam,
     gcTime: BROWSE_GC_TIME,
   });
+
+  // 离开页面后不再让在途防抖 navigate 回写 URL.
+  useEffect(() => () => clearTimeout(debounceRef.current), []);
 
   const listItems = listQuery.data?.items ?? [];
   const listTotal = listQuery.data?.total ?? 0;
@@ -370,7 +391,21 @@ function ActorsIndexPage() {
         </Group>
       )}
 
-      {isList ? (
+      {(isList ? listQuery.isError : gridQuery.isError) ? (
+        <Alert color="red" title={t("common:status.error")} maw={720} mx="auto" w="100%">
+          <Group justify="space-between" gap="sm" wrap="nowrap">
+            <Text size="sm">{t("common:status.errorDescription")}</Text>
+            <Button
+              size="compact-sm"
+              variant="light"
+              color="red"
+              onClick={() => void (isList ? listQuery.refetch() : gridQuery.refetch())}
+            >
+              {t("common:actions.retry")}
+            </Button>
+          </Group>
+        </Alert>
+      ) : isList ? (
         <ActorTable
           key={listLimit}
           items={listItems}
@@ -402,6 +437,7 @@ function ActorsIndexPage() {
               })}
             />
           )}
+          <ScrollToTop />
         </>
       )}
     </BrowsePageShell>

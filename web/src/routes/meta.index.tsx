@@ -41,6 +41,7 @@ import { HintedActionIcon } from "@/components/common/hinted-action-icon";
 import { InfiniteScrollSentinel } from "@/components/common/infinite-scroll-sentinel";
 import { ListDefaultActions } from "@/components/common/list-default-actions";
 import { PageSizeSelect } from "@/components/common/page-size-select";
+import { ScrollToTop } from "@/components/common/scroll-to-top";
 import { SortMenu } from "@/components/common/sort-menu";
 import { FacetBadge } from "@/components/media/facet-badge";
 import {
@@ -97,6 +98,7 @@ function ActiveFacetChip({
 }) {
   const { data } = useQuery(getFacetOptions({ path: { kind, facet_id: id } }));
   const { t } = useTranslation("metadata");
+  const { t: tc } = useTranslation("common");
   return (
     <Group gap={4} wrap="nowrap">
       <FacetBadge
@@ -105,7 +107,13 @@ function ActiveFacetChip({
         name={`${t(`browse.kinds.${kind}`)}: ${data?.name ?? `#${id}`}`}
         variant="outline"
       />
-      <ActionIcon size="sm" variant="subtle" color="gray" onClick={onClear} aria-label="clear">
+      <ActionIcon
+        size="sm"
+        variant="subtle"
+        color="gray"
+        onClick={onClear}
+        aria-label={tc("actions.clear")}
+      >
         <IconX size={14} />
       </ActionIcon>
     </Group>
@@ -147,10 +155,17 @@ function ActiveVrChip({ vr, onClear }: { vr: boolean; onClear: () => void }) {
 }
 
 function ActiveTriChip({ label, onClear }: { label: string; onClear: () => void }) {
+  const { t } = useTranslation("common");
   return (
     <Group gap={4} wrap="nowrap">
       <Badge variant="outline">{label}</Badge>
-      <ActionIcon size="sm" variant="subtle" color="gray" onClick={onClear} aria-label="clear">
+      <ActionIcon
+        size="sm"
+        variant="subtle"
+        color="gray"
+        onClick={onClear}
+        aria-label={t("actions.clear")}
+      >
         <IconX size={14} />
       </ActionIcon>
     </Group>
@@ -238,6 +253,9 @@ function MetaIndexPage() {
     if (semanticMode) void refetchSemanticStatus();
   }, [semanticMode, refetchSemanticStatus]);
 
+  // 防抖中的 navigate 不能跨页面存活, 也不得在切换搜索方式后回写旧关键词.
+  useEffect(() => () => clearTimeout(debounceRef.current), []);
+
   const semanticNotice =
     !semanticActive || semanticStatus == null
       ? null
@@ -311,7 +329,9 @@ function MetaIndexPage() {
   }
 
   function toggleSemantic() {
-    // 切换搜索方式时清空输入, 避免将关键词作为画面描述提交, 或反向提交.
+    // 切换搜索方式时清空输入并撤销在途防抖, 避免旧关键词被写成语义描述.
+    clearTimeout(debounceRef.current);
+    debounceRef.current = undefined;
     setSearchInput("");
     void navigate({
       search: (prev) => ({
@@ -622,7 +642,7 @@ function MetaIndexPage() {
                     search: (prev) => ({ ...prev, saved_query_id: undefined, page: 1 }),
                   })
                 }
-                aria-label="clear"
+                aria-label={t("common:actions.clear")}
               >
                 <IconX size={14} />
               </ActionIcon>
@@ -680,7 +700,21 @@ function MetaIndexPage() {
         </Group>
       )}
 
-      {semanticNotice != null ? (
+      {(isList ? listQuery.isError : gridQuery.isError) ? (
+        <Alert color="red" title={t("common:status.error")} maw={720} mx="auto" w="100%">
+          <Group justify="space-between" gap="sm" wrap="nowrap">
+            <Text size="sm">{t("common:status.errorDescription")}</Text>
+            <Button
+              size="compact-sm"
+              variant="light"
+              color="red"
+              onClick={() => void (isList ? listQuery.refetch() : gridQuery.refetch())}
+            >
+              {t("common:actions.retry")}
+            </Button>
+          </Group>
+        </Alert>
+      ) : semanticNotice != null ? (
         <Alert color="blue" title={t("semantic.unavailableTitle")} maw={720} mx="auto" w="100%">
           {semanticNotice}
         </Alert>
@@ -724,6 +758,7 @@ function MetaIndexPage() {
               })}
             />
           )}
+          <ScrollToTop />
         </>
       )}
     </BrowsePageShell>

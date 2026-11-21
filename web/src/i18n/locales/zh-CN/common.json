@@ -9,6 +9,7 @@
     "reset": "重置",
     "discard": "放弃更改",
     "retry": "重试",
+    "backToTop": "返回顶部",
     "close": "关闭",
     "filters": "筛选与搜索",
     "confirm": "确认",
@@ -29,6 +30,7 @@
   "status": {
     "loading": "加载中...",
     "error": "加载失败",
+    "errorDescription": "请求失败，请检查连接后重试。",
     "empty": "暂无数据",
     "connected": "已连接",
     "disconnected": "未连接",

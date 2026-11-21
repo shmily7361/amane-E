@@ -523,7 +523,11 @@ export function ActorTable({
           <Table.Thead>
             <Table.Tr>
               <Table.Th w={36}>
-                <Checkbox checked={allSelected} onChange={() => toggleAll(pageIds)} />
+                <Checkbox
+                  checked={allSelected}
+                  indeterminate={!allSelected && pageIds.some((id) => selected.has(id))}
+                  onChange={() => toggleAll(pageIds)}
+                />
               </Table.Th>
               <Table.Th w={48} visibleFrom={PHOTO_VISIBLE_FROM} />
               <SortableTh

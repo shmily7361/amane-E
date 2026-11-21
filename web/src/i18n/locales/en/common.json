@@ -9,6 +9,7 @@
     "reset": "Reset",
     "discard": "Discard",
     "retry": "Retry",
+    "backToTop": "Back to top",
     "close": "Close",
     "filters": "Filters and search",
     "confirm": "Confirm",
@@ -29,6 +30,7 @@
   "status": {
     "loading": "Loading...",
     "error": "Failed to load",
+    "errorDescription": "The request failed. Check the connection and try again.",
     "empty": "No data",
     "connected": "Connected",
     "disconnected": "Disconnected",

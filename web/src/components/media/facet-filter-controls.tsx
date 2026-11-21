@@ -4,6 +4,7 @@
  */
 
 import { Collapse, MultiSelect, Select, SimpleGrid, Stack, Text } from "@mantine/core";
+import { useDebouncedValue } from "@mantine/hooks";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -58,13 +59,14 @@ function KindFacetPicker({
 }) {
   const { t } = useTranslation("metadata");
   const [search, setSearch] = useState("");
+  const [debouncedSearch] = useDebouncedValue(search, 300);
   // 浮层保持默认 portal, 不因"面板在抽屉里"而改成 `withinPortal: false`:
   // 实测浮层挂到 body 上不会关掉抽屉 (依据见 docs/dev/frontend.md).
 
   const { data, isFetching } = useQuery({
     ...listFacetsOptions({
       path: { kind },
-      query: { search: search || undefined, limit: PICKER_LIMIT, offset: 0 },
+      query: { search: debouncedSearch || undefined, limit: PICKER_LIMIT, offset: 0 },
     }),
     enabled,
   });
