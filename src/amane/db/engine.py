@@ -1,3 +1,4 @@
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -29,6 +30,14 @@ async def create_async_engine_from_path(db_path: Path | str, *, policy: DbLogPol
     except Exception as e:
         raise RuntimeError(f"Database migration failed: {e}") from e
 
+    # journal_mode 持久化在库文件里, 只设置一次. 逐连接重设需要与正在写的事务争用排他锁,
+    # 并发创建会话时会让 BEGIN IMMEDIATE 报 database is locked / readonly.
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute("PRAGMA journal_mode=WAL")
+    finally:
+        connection.close()
+
     url = f"sqlite+aiosqlite:///{path}"
     engine = create_async_engine(url, echo=False)
 
@@ -36,7 +45,6 @@ async def create_async_engine_from_path(db_path: Path | str, *, policy: DbLogPol
     def _set_sqlite_pragma(dbapi_conn, connection_record):
         # 这些设置都是连接级的: 每个新连接都必须重设, 漏设即退回驱动默认.
         cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
         # WAL 下掉电最多丢最近若干已提交事务且不损坏库, 换来提交不再逐笔 fsync.
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")

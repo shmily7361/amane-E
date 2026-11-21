@@ -2,6 +2,7 @@
 
 import io
 import os
+import sqlite3
 from contextlib import contextmanager
 from ipaddress import ip_address
 from typing import TYPE_CHECKING
@@ -65,12 +66,18 @@ def _file_engine(db_path: Path) -> AsyncEngine:
 
     SQLite 自身通过连接级事务隔离 + WAL 控制并发写, 应用层无需加锁.
     """
+    # WAL 只设置一次: 逐连接重设会与并发写事务争用排他锁.
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("PRAGMA journal_mode=WAL")
+    finally:
+        connection.close()
+
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", connect_args={"timeout": 5})
 
     @event.listens_for(engine.sync_engine, "connect")
     def _set_sqlite_pragma(dbapi_conn, _connection_record):
         cursor = dbapi_conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
         # 测试库数据可丢弃: 关闭 fsync 刷盘加速写入 (生产保持默认 FULL).
         cursor.execute("PRAGMA synchronous=OFF")
         # 旧内存库 (StaticPool) 不启用 FK; 保持该语义, 避免无归属 MediaFile 的用例集体失败.
