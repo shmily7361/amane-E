@@ -211,8 +211,8 @@ class ColdSettings(BaseSettings):
     db_pool_size: int = Field(default=24, ge=5, le=200)
     """主库连接池常驻连接数 (AMANE_DB_POOL_SIZE). 大库多 worker 时需大于 worker.concurrency."""
 
-    db_max_overflow: int = Field(default=8, ge=0, le=100)
-    """主库连接池临时连接数 (AMANE_DB_MAX_OVERFLOW)."""
+    db_max_overflow: int = Field(default=30, ge=0, le=100)
+    """主库连接池临时连接数 (AMANE_DB_MAX_OVERFLOW). 与 watcher 闸门配套, 留足并发余量."""
 
     db_pool_timeout: float = Field(default=60.0, ge=5.0, le=300.0)
     """借连接等待上限秒数 (AMANE_DB_POOL_TIMEOUT), 须大于 busy_timeout."""

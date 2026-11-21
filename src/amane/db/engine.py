@@ -24,7 +24,7 @@ async def create_async_engine_from_path(
     *,
     policy: DbLogPolicy | None = None,
     pool_size: int = 24,
-    max_overflow: int = 8,
+    max_overflow: int = 30,
     pool_timeout: float = 60.0,
 ) -> AsyncEngine:
     """先 ``upgrade_sqlite_database``, 再开业务引擎. 事务性 DDL 仅用于迁移连接.

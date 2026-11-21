@@ -2,6 +2,7 @@
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -127,6 +128,78 @@ class TestCloudDriveIngest:
         )
         assert await repo.get_media_file_by_path(str(video)) is None
         await service.stop()
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_dir_delete_uses_paged_scan(
+        self,
+        service: WatcherService,
+        repo: Repository,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """目录删除事件按游标分批扫描, 不再一次性把整库读进内存."""
+        nested = tmp_path / "show"
+        nested.mkdir()
+        video = nested / "a.mp4"
+        video.write_bytes(b"x" * 32)
+        lib = await repo.create_library(
+            name="cd",
+            path=str(tmp_path),
+            ingest=LibraryIngest.CLOUDDRIVE,
+            cloud_path="/115open/lib",
+            automation=LibraryAutomation.WATCH,
+        )
+        assert lib.id is not None
+        await repo.create_media_file(library_id=lib.id, path=str(video))
+
+        async def _no_unlimited_scan(**_kwargs: object) -> list[object]:
+            raise AssertionError("watcher 不应再调用 list_media_files(limit=None)")
+
+        monkeypatch.setattr(repo, "list_media_files", _no_unlimited_scan)
+        await service._delete_under(lib.id, nested)
+        assert await repo.get_media_file_by_path(str(video)) is None
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_watcher_event_gates_limit_concurrency(
+        self, service: WatcherService, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """目录级与逐文件事件各有并发闸门, 批量事件不会瞬间占满连接池."""
+        import amane.scheduler.service as scheduler_service
+
+        monkeypatch.setattr(scheduler_service, "_DB_GATE", asyncio.Semaphore(1))
+        monkeypatch.setattr(scheduler_service, "_FILE_GATE", asyncio.Semaphore(1))
+
+        active = 0
+        peak = 0
+
+        async def _fake_iter(_self: WatcherService, _library_id: int):
+            yield SimpleNamespace(id=1, path="/x/a.mp4")
+
+        async def _fake_deleted(_self: WatcherService, _path: Path) -> None:
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+
+        monkeypatch.setattr(WatcherService, "_iter_library_media", _fake_iter)
+        monkeypatch.setattr(WatcherService, "_on_file_deleted_inner", _fake_deleted)
+        await asyncio.gather(*(service._delete_under(1, Path("/x")) for _ in range(6)))
+        assert peak == 1
+
+        active = 0
+        peak = 0
+
+        async def _fake_found(_self: WatcherService, _path: Path, _library_id: int) -> None:
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+
+        monkeypatch.setattr(WatcherService, "_on_file_found_inner", _fake_found)
+        await asyncio.gather(*(service._on_file_found(Path(f"/x/{i}.mp4"), 1) for i in range(6)))
+        assert peak == 1
 
     @pytest.mark.asyncio(loop_scope="function")
     async def test_outside_prefix_ignored(self, service: WatcherService, repo: Repository, tmp_path: Path) -> None:

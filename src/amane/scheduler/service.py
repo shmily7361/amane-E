@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
-from collections.abc import Coroutine, Sequence
+from collections.abc import AsyncIterator, Coroutine, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -21,9 +21,18 @@ from .clouddrive import CloudDriveChange, CloudDriveRoute, local_for, match_rout
 from .watcher import FileWatcher
 
 if TYPE_CHECKING:
+    from ..db.models import MediaFile
     from ..db.repository import Repository
 
 logger = structlog.get_logger()
+
+# watcher 的每个事件都是 fire-and-forget 的 create_task. 整理库时目录删除/前缀重写会瞬间
+# 堆积成百上千个任务, 每个都开会话, 连接池直接被抽干 (QueuePool limit reached).
+# 两类事件用独立信号量: _delete_under / _rewrite_prefix 内部会调逐文件回调, 共用一个会自锁.
+_DB_GATE = asyncio.Semaphore(4)
+_FILE_GATE = asyncio.Semaphore(8)
+
+_WATCHER_SCAN_PAGE_SIZE = 500
 
 _CHECK_INTERVAL = 1.0
 
@@ -402,13 +411,27 @@ class WatcherService:
             if hit.kind is LibraryFileKind.MEDIA:
                 await self._on_file_found(hit.path, route.library_id)
 
+    async def _iter_library_media(self, library_id: int) -> AsyncIterator[MediaFile]:
+        """按 id 游标分批遍历库内索引, 每批单独开会话并及时释放."""
+        after_id = 0
+        while True:
+            page = await self._repo.list_media_files_page(
+                library_id=library_id, after_id=after_id, limit=_WATCHER_SCAN_PAGE_SIZE
+            )
+            if not page:
+                return
+            for media in page:
+                if media.id is not None:
+                    after_id = media.id
+                yield media
+
     async def _delete_under(self, library_id: int, root: Path) -> None:
-        files = await self._repo.list_media_files(library_id=library_id, limit=None)
-        for media in files:
-            if media.id is None:
-                continue
-            if path_is_under(media.path, root):
-                await self._on_file_deleted(Path(media.path))
+        async with _DB_GATE:
+            async for media in self._iter_library_media(library_id):
+                if media.id is None:
+                    continue
+                if path_is_under(media.path, root):
+                    await self._on_file_deleted(Path(media.path))
 
     def _accept_cloud_file(self, route: CloudDriveRoute, path: Path) -> bool:
         return _file_in_scope(path, route) and route.scan.classify(path) is LibraryFileKind.MEDIA
@@ -420,10 +443,19 @@ class WatcherService:
         source_file: str,
         destination_file: str,
     ) -> None:
+        async with _DB_GATE:
+            await self._rewrite_prefix_inner(src_route, dest_route, source_file, destination_file)
+
+    async def _rewrite_prefix_inner(
+        self,
+        src_route: CloudDriveRoute,
+        dest_route: CloudDriveRoute,
+        source_file: str,
+        destination_file: str,
+    ) -> None:
         src_root = local_for(src_route, source_file)
         dest_root = local_for(dest_route, destination_file)
-        files = await self._repo.list_media_files(library_id=src_route.library_id, limit=None)
-        for media in files:
+        async for media in self._iter_library_media(src_route.library_id):
             if media.id is None or not path_is_under(media.path, src_root):
                 continue
             rel = Path(media.path).relative_to(src_root)
@@ -461,6 +493,10 @@ class WatcherService:
             logger.warning("no event loop available")
 
     async def _on_file_found(self, path: Path, library_id: int) -> None:
+        async with _FILE_GATE:
+            await self._on_file_found_inner(path, library_id)
+
+    async def _on_file_found_inner(self, path: Path, library_id: int) -> None:
         path_str = str(path)
 
         existing = await self._repo.get_media_file_by_path(path_str)
@@ -493,6 +529,10 @@ class WatcherService:
         await self._event_bus.emit(EventType.FILE_DISCOVERED, {"path": path_str, "media_file_id": media.id})
 
     async def _on_file_deleted(self, path: Path) -> None:
+        async with _FILE_GATE:
+            await self._on_file_deleted_inner(path)
+
+    async def _on_file_deleted_inner(self, path: Path) -> None:
         path_str = str(path)
         media = await self._repo.get_media_file_by_path(path_str)
         if media is None:

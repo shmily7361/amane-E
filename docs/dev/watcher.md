@@ -41,4 +41,6 @@ native Observer 启动失败 (如 inotify 配额) 只停掉 FileWatcher, 已登�
 
 目录事件可能早于目录缓存列出文件, 因此扫描前等待 `watcher.debounce_seconds`; 防抖结束后按**当前** `_cloud_routes` 重算本地路径 — 库已删除、或 `cloud_path` / recursive 已不再覆盖该目录则跳过. 文件级事件与目录展开重叠时靠路径 UNIQUE 与「已登记则跳过」幂等. 目录跨库 rename 按目标库的 recursive / glob / 文件黑名单 / 预告片 / 大小规则重新判定, 不接受的文件只删源索引、不写入目标库.
 
+回调是 fire-and-forget: 每个事件都 `create_task` 一个协程. 整理库时一次移动会触发成批目录删除/前缀重写与逐文件事件, 不限并发会让每个协程各开一个会话, 抽干主库连接池. `scheduler/service.py` 用两级独立信号量限流 — 目录删除/前缀重写 `_DB_GATE=4`, 逐文件增删 `_FILE_GATE=8`; 两者分开是为了让目录级协程内部调用逐文件回调时不会自锁. 这两处目录级索引扫描按 id 游标分页 (`list_media_files_page`), 不再 `limit=None` 一次加载整库.
+
 本机经 FUSE 写入仍会推文件级 webhook, 该库不挂 Observer, 只经由这一条. CloudDrive 完全不推送的变更此通道看不见, 仍可用 REFRESH.
