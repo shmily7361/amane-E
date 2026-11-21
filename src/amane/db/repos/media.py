@@ -3,8 +3,10 @@ from typing import NamedTuple, Unpack
 
 from sqlalchemy import delete as sqla_delete
 from sqlalchemy import func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql.functions import count
 from sqlmodel import col, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel.sql.expression import SelectOfScalar
 
 from ...parsing import ContentType, FilePhase, FilePhaseSummary, Mosaic, file_phase_from_path, summarize_file_phases
@@ -12,7 +14,7 @@ from ...utils.collections import unique_ids
 from ...utils.path import nfc_path
 from ..models import MediaFile, MediaFileStatus, MediaSortField, Metadata, SortOrder
 from ..repo_types import _MEDIA_SORT_COLUMNS, MediaFileUpdates, _apply_media_phase_filters, _order_clause, _utcnow
-from .base import RepositoryMixinBase, chunks
+from .base import RepositoryMixinBase, acquire_write_lock, chunks
 
 
 def _apply_path_phase(media: MediaFile) -> None:
@@ -43,16 +45,42 @@ class MetadataFilesSummary(NamedTuple):
 
 class MediaRepoMixin(RepositoryMixinBase):
     async def create_media_file(self, library_id: int, **updates: Unpack[MediaFileUpdates]) -> MediaFile:
+        """按路径幂等入库: 已存在时返回既有行, 不改写其字段.
+
+        调用方常见的「先查再建」发生在会话外, 两个 REFRESH 并发时会同时判定缺失; 这里把
+        查重与插入放进同一写事务, 并把唯一约束冲突收敛为幂等成功.
+        """
         path = updates.get("path")
         if path is not None:
-            updates["path"] = nfc_path(path)
+            path = nfc_path(path)
+            updates["path"] = path
         async with self._session() as session:
+            if path is not None:
+                await acquire_write_lock(session)
+                existing = await self._find_media_file_by_path(session, path)
+                if existing is not None:
+                    return existing
             media = MediaFile(library_id=library_id, **updates)
             _apply_path_phase(media)
             session.add(media)
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                if path is None:
+                    raise
+                existing = await self._find_media_file_by_path(session, path)
+                if existing is None:
+                    raise
+                return existing
             await session.refresh(media)
             return media
+
+    @staticmethod
+    async def _find_media_file_by_path(session: AsyncSession, path: str) -> MediaFile | None:
+        stmt = select(MediaFile).where(MediaFile.path == path)
+        result = await session.exec(stmt)
+        return result.first()
 
     async def get_media_file(self, media_id: int) -> MediaFile | None:
         async with self._session() as session:
@@ -60,9 +88,7 @@ class MediaRepoMixin(RepositoryMixinBase):
 
     async def get_media_file_by_path(self, path: str) -> MediaFile | None:
         async with self._session() as session:
-            stmt = select(MediaFile).where(MediaFile.path == nfc_path(path))
-            result = await session.exec(stmt)
-            return result.first()
+            return await self._find_media_file_by_path(session, nfc_path(path))
 
     async def get_valid(self, disk_paths: Iterable[str]) -> Sequence[MediaFile]:
         """路径按 ``chunks`` 分批 IN, 避开绑定变量上限. 比较前统一 NFC."""

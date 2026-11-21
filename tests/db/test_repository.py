@@ -107,6 +107,24 @@ class TestMediaFileRepo:
         assert fetched.has_subtitle is False
 
     @pytest.mark.asyncio(loop_scope="function")
+    async def test_create_concurrent_same_path_is_idempotent(self, repo: Repository):
+        """并发登记同一路径 (含 NFC/NFD 变体) 只落一行, 都返回同一条既有记录."""
+        nfc = "/video/\u3058.mp4"
+        nfd = "/video/\u3057\u3099.mp4"
+        results = await asyncio.gather(
+            repo.create_media_file(library_id=1, path=nfc, number="FIRST"),
+            repo.create_media_file(library_id=1, path=nfd, number="SECOND"),
+            return_exceptions=True,
+        )
+        assert all(isinstance(result, MediaFile) for result in results), results
+        created = [result for result in results if isinstance(result, MediaFile)]
+        assert len({media.id for media in created}) == 1
+        assert created[0].number == "FIRST"
+        files = await repo.list_media_files(library_id=1, limit=None)
+        assert len(files) == 1
+        assert files[0].path == nfc
+
+    @pytest.mark.asyncio(loop_scope="function")
     async def test_get_by_path(self, repo: Repository):
         await repo.create_media_file(library_id=1, path="/video/ABC-123.mp4", number="ABC-123")
         found = await repo.get_media_file_by_path("/video/ABC-123.mp4")
