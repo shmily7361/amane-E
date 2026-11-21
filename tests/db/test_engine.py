@@ -55,6 +55,16 @@ _ENGINE_PRAGMAS: dict[str, object] = {
 
 
 @pytest.mark.asyncio
+async def test_engine_pool_config(db_path):
+    """池参数按 worker 并发与 API 余量配置, 不再使用 SQLAlchemy 默认的 5/10/30."""
+    engine = await create_async_engine_from_path(db_path, pool_size=9, max_overflow=3, pool_timeout=45)
+    assert engine.pool.size() == 9
+    assert engine.pool._max_overflow == 3
+    assert engine.pool.timeout() == 45
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_engine_connection_pragmas(db_path):
     """池里每个连接都应用同一套 PRAGMA, 而不只是第一个."""
     engine = await create_async_engine_from_path(db_path)

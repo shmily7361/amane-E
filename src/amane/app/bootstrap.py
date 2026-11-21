@@ -128,7 +128,13 @@ async def start_app(config: ConfigManager | None = None) -> AppSession:
     plugin_manager.validate_hot_settings(hot, require_available=False)
 
     db_log_policy = DbLogPolicy()
-    engine = await create_async_engine_from_path(cold.db_path, policy=db_log_policy)
+    engine = await create_async_engine_from_path(
+        cold.db_path,
+        policy=db_log_policy,
+        pool_size=cold.db_pool_size,
+        max_overflow=cold.db_max_overflow,
+        pool_timeout=cold.db_pool_timeout,
+    )
     # 向量 sidecar, 不纳入 Alembic; 删除该文件即清空索引. 惰性建立连接, 未使用语义检索时不创建文件.
     embeddings = EmbeddingStore(cold.data_dir / "embeddings.db")
     repo = Repository(engine, embeddings=embeddings)

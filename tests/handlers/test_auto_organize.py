@@ -101,12 +101,36 @@ async def test_auto_organize_disabled_chains_nothing(repo: Repository, tmp_path:
 
 @pytest.mark.asyncio(loop_scope="function")
 async def test_auto_organize_ignores_by_number_scrape(repo: Repository, tmp_path: Path) -> None:
-    """按番号刮削没有可落盘的文件, 库未知, 因此不链整理."""
+    """普通按番号刮削没有写回意图, 即使库开着自动整理也不链."""
     await _library_with_file(repo, tmp_path, auto_organize=True)
     result = await _handler(repo).handle(ScrapePayload(number="MIDV-123", media_file_id=None))
 
     assert result.success is True
     assert _organize_followups(result) == []
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_explicit_write_back_chains_linked_files(repo: Repository, tmp_path: Path) -> None:
+    """显式按番号重刮时, 按 metadata_id 反查关联文件写回, 不受 auto_organize 开关影响."""
+    lib_id, media_id = await _library_with_file(repo, tmp_path, auto_organize=False)
+    handler = _handler(repo)
+
+    first = await handler.handle(ScrapePayload(number="MIDV-123", media_file_id=media_id))
+    assert first.success is True
+    assert _organize_followups(first) == []
+    assert first.result is not None
+    metadata_id = first.result.metadata_id
+    assert metadata_id is not None
+
+    result = await handler.handle(ScrapePayload(number="MIDV-123", write_back=True))
+    assert result.success is True
+    organize = _organize_followups(result)
+    assert len(organize) == 1
+    assert organize[0].key == f"organize:write-back:{metadata_id}:{lib_id}"
+    assert organize[0].priority == -1
+    assert organize[0].payload["library_id"] == lib_id
+    assert organize[0].payload["media_file_ids"] == [media_id]
+    assert organize[0].payload["prune_empty_dirs"] is False
 
 
 @pytest.mark.asyncio(loop_scope="function")

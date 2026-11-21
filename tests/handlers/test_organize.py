@@ -500,13 +500,15 @@ async def test_organize_writes_subtitle_tag_for_external_subtitle(
     watermark_dir.mkdir()
     Image.new("RGBA", (40, 20), (255, 0, 0, 255)).save(watermark_dir / "subtitle.png")
 
+    # 整理阶段只读本地缓存; 先把刮削期应已缓存的封面写入 ResourceStore.
+    client = cast("WebClient", _FakeImageClient())
+    await resource_store.acquire("https://s/t.jpg", client)
+
     config = HotSettings(watermark=WatermarkConfig(enabled=True, scale=0.2))
     with patch(
         "amane.handlers.file.apply_cover_watermarks_from_info", wraps=apply_cover_watermarks_from_info
     ) as watermark:
-        org = OrganizeHandler(
-            repo, config, resource_store, web_client=cast("WebClient", _FakeImageClient()), watermark_dir=watermark_dir
-        )
+        org = OrganizeHandler(repo, config, resource_store, web_client=client, watermark_dir=watermark_dir)
         result = await org.handle(OrganizePayload(library_id=lib.id, path=str(src_dir)))
     assert result.success is True
     assert result.result is not None
@@ -550,10 +552,12 @@ async def test_organize_stamps_uncensored_from_entry_type(
     watermark_dir.mkdir()
     Image.new("RGBA", (40, 20), (255, 0, 0, 255)).save(watermark_dir / "uncensored.png")
 
+    # 整理阶段不回源; 这里模拟刮削期已把封面写入 ResourceStore.
+    client = cast("WebClient", _FakeImageClient())
+    await resource_store.acquire("https://s/t.jpg", client)
+
     config = HotSettings(watermark=WatermarkConfig(enabled=True, scale=0.2))
-    org = OrganizeHandler(
-        repo, config, resource_store, web_client=cast("WebClient", _FakeImageClient()), watermark_dir=watermark_dir
-    )
+    org = OrganizeHandler(repo, config, resource_store, web_client=client, watermark_dir=watermark_dir)
     result = await org.handle(OrganizePayload(library_id=lib.id, path=str(src_dir)))
     assert result.success is True
     assert result.result is not None

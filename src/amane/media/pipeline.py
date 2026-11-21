@@ -105,6 +105,7 @@ async def materialize_images(
     *,
     content_type: ContentType,
     extrafanart_urls: dict[str, list[str]] | None = None,
+    kinds: set[DownloadableResource] | None = None,
 ) -> MaterializedImages:
     """仅下载集合内的类型; 未选中的保留聚合 URL.
 
@@ -112,7 +113,7 @@ async def materialize_images(
     extrafanart 仅下载到 Resource, 站点分组结构不重排.
     海报裁切只对 ``allows_poster_crop`` 放行的类型执行.
     """
-    kinds = set(config.scraping.download_resources)
+    kinds = set(config.scraping.download_resources) if kinds is None else set(kinds)
     crop_enabled = config.scraping.crop_poster and allows_poster_crop(content_type)
 
     # 下载 thumb.

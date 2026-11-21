@@ -892,13 +892,14 @@ async def cascade_delete_metadata(session: AsyncSession, metadata: Metadata) -> 
     """
     assert metadata.id is not None
     metadata_id = metadata.id
-    stmt = select(MediaFile).where(MediaFile.metadata_id == metadata_id)
-    result = await session.exec(stmt)
-    for mf in result.all():
-        mf.metadata_id = None
-        mf.status = MediaFileStatus.PENDING
-        mf.updated_at = _utcnow()
-        session.add(mf)
+    # 批量 UPDATE 不把 MediaFile 载入 identity map: 编辑后入队的 ORGANIZE 可能正在另一事务回写
+    # 同一行, ORM 脏检查会因 version/行匹配失败抛 StaleDataError. 条件 UPDATE 只改仍指向本条目的行.
+    await session.exec(
+        update(MediaFile)
+        .where(col(MediaFile.metadata_id) == metadata_id)
+        .values(metadata_id=None, status=MediaFileStatus.PENDING, updated_at=_utcnow())
+        .execution_options(synchronize_session=False)
+    )
     await session.exec(sqla_delete(MetadataActor).where(col(MetadataActor.metadata_id) == metadata_id))
     await session.exec(sqla_delete(MetadataDirector).where(col(MetadataDirector.metadata_id) == metadata_id))
     await session.exec(sqla_delete(MetadataTag).where(col(MetadataTag.metadata_id) == metadata_id))

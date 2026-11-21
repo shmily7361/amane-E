@@ -91,3 +91,29 @@ async def test_write_nfo_title_keeps_number_once(tmp_path: Path, number: str, ti
 
     root = ET.fromstring(nfo_path.read_text(encoding="utf-8"))
     assert [root.findtext(tag) for tag in ("title", "originaltitle", "sorttitle")] == [expected] * 3
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_write_nfo_prefers_local_artifacts(tmp_path: Path, metadata: Metadata) -> None:
+    """已落库的图片与预告片写相对路径, 媒体服务器不再按外链回源."""
+    metadata.poster_urls = ["https://site.example/poster.jpg"]
+    metadata.thumb_urls = ["https://site.example/thumb.jpg"]
+    metadata.trailer_urls = ["https://site.example/trailer.mp4"]
+    nfo_path = tmp_path / "movie" / "MIDV-123.nfo"
+
+    ok = await write_nfo(
+        metadata,
+        nfo_path,
+        artifacts={
+            "poster": tmp_path / "movie" / "poster.jpg",
+            "thumb": tmp_path / "movie" / "thumb.jpg",
+            "trailer": tmp_path / "movie" / "trailer.mp4",
+        },
+    )
+
+    assert ok is True
+    root = ET.fromstring(nfo_path.read_text(encoding="utf-8"))
+    assert root.findtext("poster") == "poster.jpg"
+    assert root.findtext("cover") == "thumb.jpg"
+    assert root.findtext("trailer") == "trailer.mp4"
+    assert "site.example" not in nfo_path.read_text(encoding="utf-8")

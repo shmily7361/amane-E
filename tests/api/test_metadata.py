@@ -479,3 +479,27 @@ class TestMetadataPatch:
             assert resp.status_code == 422, payload
         detail = (await client.get(f"metadata/{meta.id}")).json()["metadata"]
         assert detail["title"] == "原标题"
+
+
+class TestIncrementalWriteback:
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_patch_enqueues_organize_for_linked_files(self, client: AsyncClient, repo: Repository):
+        """编辑 NFO 字段后只入队关联文件的 ORGANIZE, 不做全库整理."""
+        meta = await repo.upsert_metadata(number="WB-001")
+        assert meta.id is not None
+        media = await repo.create_media_file(
+            library_id=1,
+            path="/video/WB-001.mp4",
+            number="WB-001",
+            metadata_id=meta.id,
+        )
+        assert media.id is not None
+
+        response = await client.patch(f"metadata/{meta.id}", json={"title": "增量落盘"})
+
+        assert response.status_code == 200
+        tasks = await repo.list_tasks(task_types=[TaskType.ORGANIZE], limit=10)
+        assert len(tasks) == 1
+        payload = tasks[0].payload
+        assert payload["media_file_ids"] == [media.id]
+        assert payload["prune_empty_dirs"] is False

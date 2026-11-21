@@ -35,6 +35,9 @@ logger = structlog.get_logger()
 
 RESOURCE_URL_PREFIX = "/api/resources"
 
+EXTRAFANART_CONCURRENCY = 4
+"""同一条目的剧照下载并发上限. 无界 gather 会瞬时借出多条数据库连接, 与 worker 并发叠加后耗尽连接池."""
+
 # 上游把已下架资源重定向到 200 的占位图 (DMM 的 now_printing, up-timely 的 noimage) 时不能算获取成功:
 # 否则该 URL 会被判为可用并前置, 前端最终显示占位图本身.
 _PLACEHOLDER_PATH_MARKERS: tuple[str, ...] = ("/now_printing/", "/noimage.")
@@ -114,6 +117,7 @@ class ResourceStore:
         self._base_dir = base_dir
         self._guards: dict[str, _LockEntry] = {}
         self._guards_lock = asyncio.Lock()
+        self._extrafanart_sem = asyncio.Semaphore(EXTRAFANART_CONCURRENCY)
         base_dir.mkdir(parents=True, exist_ok=True)
 
     def _session(self) -> AsyncSession:
@@ -434,11 +438,37 @@ class ResourceStore:
         priority: list[str],
         client: WebClient,
     ) -> list[Path]:
+        async def acquire_one(url: str) -> Path | None:
+            async with self._extrafanart_sem:
+                return await self.acquire(url, client)
+
         for site in priority:
             if site not in urls_by_site:
                 continue
-            results = await asyncio.gather(*[self.acquire(u, client) for u in urls_by_site[site]])
+            results = await asyncio.gather(*(acquire_one(u) for u in urls_by_site[site]))
             paths = [p for p in results if p is not None]
+            if paths:
+                return paths
+        return []
+
+    async def resolve_extrafanart(self, urls_by_site: dict[str, list[str]], priority: list[str]) -> list[Path]:
+        """只读本地缓存解析剧照: 缺项直接跳过, 不发起任何网络请求.
+
+        整理阶段不再补下资源; 缺失项应由重新刮削写入缓存.
+        """
+        for site in priority:
+            if site not in urls_by_site:
+                continue
+            paths: list[Path] = []
+            for url in urls_by_site[site]:
+                internal = internal_url_hash(url)
+                if internal is not None:
+                    found = await self.get_by_url_hash(internal)
+                    path = found[1] if found else None
+                else:
+                    path = await self.resolve(url)
+                if path is not None:
+                    paths.append(path)
             if paths:
                 return paths
         return []

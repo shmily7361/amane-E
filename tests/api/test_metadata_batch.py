@@ -57,6 +57,7 @@ class TestMetadataBatchHttp:
         assert task is not None
         assert task.payload["content_type"] == "censored"
         assert set(task.payload["use_cache"]) == {"metadata", "trans"}
+        assert task.payload["write_back"] is True
 
         custom_meta = await repo.upsert_metadata(number="BS-004")
         assert custom_meta.id is not None

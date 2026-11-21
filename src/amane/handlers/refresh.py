@@ -121,11 +121,10 @@ class RefreshHandler(TaskHandler[RefreshPayload, RefreshResult]):
                         if not still_there:
                             missing.append(f)
                 if missing:
-                    logger.info("remove invalid db entries", count=len(missing))
-                    for media in missing:
-                        assert media.id is not None
-                        await self._repo.delete_media_file(media.id)
-                    removed += len(missing)
+                    ids = [media.id for media in missing if media.id is not None]
+                    logger.info("remove invalid db entries", count=len(ids))
+                    deleted, _ = await self._repo.batch_delete_media_files(ids)
+                    removed += deleted
 
         media_files = await self._repo.list_media_files(
             library_id=payload.library_id, status=payload.scrape, limit=None

@@ -416,7 +416,7 @@ class Library(SQLModel, table=True):
     """ORGANIZE 时在视频同目录发现字幕的扩展名列表; 空列表关闭."""
     write_nfo: bool = Field(default=True)
     copy_resources: list[DownloadableResource] = Field(
-        default_factory=lambda: [r for r in DownloadableResource if r != DownloadableResource.trailer],
+        default_factory=lambda: list(DownloadableResource),
         sa_column=Column(JSON, nullable=False),
     )
     trailer_pattern: TrailerPattern = Field(default=DEFAULT_TRAILER_PATTERN, sa_column=Column(String, nullable=False))

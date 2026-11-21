@@ -23,6 +23,7 @@ import {
   IconCheck,
   IconCrop,
   IconExternalLink,
+  IconFileExport,
   IconFolders,
   IconGitMerge,
   IconLock,
@@ -217,6 +218,18 @@ function TitleDetailPage() {
       }),
   });
 
+  const writeToDiskMutation = useMutation({
+    ...submitTaskMutation(),
+    onSuccess: () => {
+      notifications.show({ message: t("common:toast.organizeStarted"), color: "blue" });
+    },
+    onError: (err) =>
+      notifications.show({
+        message: extractErrorMessage(err, t("common:toast.operationFailed")),
+        color: "red",
+      }),
+  });
+
   const deleteMutation = useMutation({
     ...deleteMetadataMutation(),
     onSuccess: () => {
@@ -402,6 +415,26 @@ function TitleDetailPage() {
   const hasExtrafanart = item.extrafanart && item.extrafanart.length > 0;
   const runtime = formatRuntime(item.runtime);
   const allLocked = LOCKABLE_FIELDS.every((field) => lockedFields.has(field));
+
+  function submitWriteToDisk() {
+    const groups = new Map<number, number[]>();
+    for (const file of data?.files ?? []) {
+      const ids = groups.get(file.library_id) ?? [];
+      ids.push(file.id);
+      groups.set(file.library_id, ids);
+    }
+    if (groups.size === 0) return;
+    for (const [libraryId, ids] of groups) {
+      writeToDiskMutation.mutate({
+        body: {
+          type: "organize",
+          library_id: libraryId,
+          media_file_ids: ids,
+          prune_empty_dirs: false,
+        },
+      });
+    }
+  }
 
   function applyLocks(fields: readonly MetadataField[], pending: MetadataField | null = null) {
     const target = [...fields];
@@ -822,6 +855,16 @@ function TitleDetailPage() {
                 </Menu.Item>
               </Menu.Dropdown>
             </Menu>
+            <Button
+              size="xs"
+              variant="light"
+              leftSection={<IconFileExport size={14} />}
+              disabled={(data?.files.length ?? 0) === 0}
+              loading={writeToDiskMutation.isPending}
+              onClick={submitWriteToDisk}
+            >
+              {t("detail.writeToDisk")}
+            </Button>
             <Button
               size="xs"
               variant="light"

@@ -1,3 +1,4 @@
+from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Protocol
 
@@ -7,7 +8,7 @@ from ..aggregate import SCALAR_FIELDS, AggregatedMetadata, CrawlerLike, FieldLan
 from ..crawlers.models import SearchQuery
 from ..crawlers.site_roles import builtin_descriptors
 from ..db.models import TaskType
-from ..enums import ActorGender, MetadataField
+from ..enums import ActorGender, DownloadableResource, MetadataField
 from ..media import materialize_images
 from ..observability import current
 from ..observability.models import SiteOutcomeKind
@@ -153,6 +154,10 @@ class ScrapeHandler(TaskHandler[ScrapePayload, ScrapeResult]):
         trailer_out = result.metadata.trailer_urls
         if self._web_client is not None:
             try:
+                # 刮削期缓存所有库在整理时需要的类型: 否则 ORGANIZE 首次落盘必然联网补下.
+                download_kinds = set[DownloadableResource](self._config.scraping.download_resources)
+                for library in await self._repo.list_libraries():
+                    download_kinds.update(library.copy_resources)
                 materialized = await materialize_images(
                     result.metadata.poster_urls,
                     result.metadata.thumb_urls,
@@ -163,6 +168,7 @@ class ScrapeHandler(TaskHandler[ScrapePayload, ScrapeResult]):
                     self._resource_store.data_dir,
                     content_type=content_type,
                     extrafanart_urls=result.metadata.extrafanart_urls,
+                    kinds=download_kinds,
                 )
                 poster_out = materialized.poster_urls
                 thumb_out = materialized.thumb_urls
@@ -205,8 +211,8 @@ class ScrapeHandler(TaskHandler[ScrapePayload, ScrapeResult]):
 
         # 为尚未刮削的演员扇出 ACTOR_SCRAPE.
         actor_followups = await self._actor_scrape_followups(meta.actors)
-        # 库开启自动整理时为本次刮削的文件扇出 ORGANIZE.
-        organize_followups = await self._auto_organize_followups(payload, file)
+        # 库开启自动整理时整理本次文件; 显式按番号重刮则写回该元数据的关联文件.
+        organize_followups = await self._auto_organize_followups(payload, file, meta.id)
 
         await self.report_progress(progress_total, progress_total, "done")
 
@@ -243,41 +249,68 @@ class ScrapeHandler(TaskHandler[ScrapePayload, ScrapeResult]):
             outcomes=outcomes,
         )
 
-    async def _auto_organize_followups(self, payload: ScrapePayload, file: MediaFile | None) -> list[FollowupTask]:
-        """库开启自动整理时为本次刮削的那一个文件描述 ORGANIZE 后继.
+    async def _auto_organize_followups(
+        self, payload: ScrapePayload, file: MediaFile | None, metadata_id: int | None
+    ) -> list[FollowupTask]:
+        """刮削成功后描述 ORGANIZE 后继.
 
-        范围只有该文件, 且后继只在父成功后创建, 因此整理必然发生在它刮削完成之后.
-        按番号刮削没有可落盘的 `MediaFile` (库因此未知), 不在此列; `media_file_id` 非空但读不到
-        文件或库说明索引与任务不一致, 记 debug 后不链.
+        两条来源: 库开启自动整理时整理本次文件; 显式按番号重刮 (`write_back`) 时按 metadata_id
+        反查关联文件并按库分组写回. 后继只在父成功后创建, 整理必然发生在刮削完成之后.
         ``priority=-1``: 不抢占交互提交的任务; 自动整理彼此仍按 FIFO.
 
         整段 ``except`` 只为不让已写库的刮削任务转为 FAILED; 这一支不可达于任何预期输入, 出现即模型或
-        数据库有问题, 按异常记日志. 此时整理不会发生, 该文件停在「已刮削未落盘」, 与完成事务失败同属不覆盖窗口.
+        数据库有问题, 按异常记日志. 此时整理不会发生, 文件停在「已刮削未落盘」, 与完成事务失败同属不覆盖窗口.
         """
-        if payload.media_file_id is None:
-            return []
-        if file is None or file.id is None:
-            current().debug("auto organize skipped: media file missing", media_file_id=payload.media_file_id)
-            return []
-        try:
-            library = await self._repo.get_library(file.library_id)
-            if library is None:
-                current().debug("auto organize skipped: library missing", library_id=file.library_id)
-                return []
-            if not library.auto_organize:
-                return []
-            organize = OrganizePayload(library_id=file.library_id, media_file_ids=[file.id])
-            return [
+        followups: list[FollowupTask] = []
+        seen_keys: set[str] = set()
+
+        def add(library_id: int, media_file_ids: list[int], key: str) -> None:
+            if key in seen_keys or not media_file_ids:
+                return
+            seen_keys.add(key)
+            organize = OrganizePayload(
+                library_id=library_id,
+                media_file_ids=media_file_ids,
+                prune_empty_dirs=False,
+            )
+            followups.append(
                 FollowupTask(
-                    key=f"organize:{file.id}",
+                    key=key,
                     task_type=TaskType.ORGANIZE,
                     payload=organize.model_dump(mode="json"),
                     priority=-1,
                 )
-            ]
+            )
+
+        try:
+            if payload.media_file_id is not None:
+                if file is None or file.id is None:
+                    current().debug("auto organize skipped: media file missing", media_file_id=payload.media_file_id)
+                else:
+                    library = await self._repo.get_library(file.library_id)
+                    if library is None:
+                        current().debug("auto organize skipped: library missing", library_id=file.library_id)
+                    elif library.auto_organize:
+                        add(file.library_id, [file.id], f"organize:{file.id}")
+
+            if payload.write_back and metadata_id is not None:
+                grouped: dict[int, list[int]] = defaultdict(list)
+                for media in await self._repo.list_media_files(metadata_ids=[metadata_id], limit=None):
+                    if media.id is not None:
+                        grouped[media.library_id].append(media.id)
+                for library_id, media_file_ids in grouped.items():
+                    deduped = list(dict.fromkeys(media_file_ids))
+                    if await self._repo.get_library(library_id) is None:
+                        current().debug("write back skipped: library missing", library_id=library_id)
+                        continue
+                    add(library_id, deduped, f"organize:write-back:{metadata_id}:{library_id}")
         except Exception:
-            current().exception("failed to build auto organize followup", media_file_id=file.id)
-            return []
+            current().exception(
+                "failed to build organize followup",
+                media_file_id=payload.media_file_id,
+                metadata_id=metadata_id,
+            )
+        return followups
 
     async def _actor_scrape_followups(self, actor_names: list[str]) -> list[FollowupTask]:
         """为尚未刮削的影片演员描述 ACTOR_SCRAPE 后继; 失败不阻断主流程.

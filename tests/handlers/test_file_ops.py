@@ -587,3 +587,49 @@ async def test_extrafanart_names_fall_back_without_library(resource_store: Resou
 
     assert result.outcome is PlaceOutcome.PLACED
     assert sorted(p.name for p in paths.extrafanart_dir.iterdir()) == ["1.jpg", "2.jpg"]
+
+
+class NoNetworkClient:
+    async def download(self, url: str, dest: Path, **kwargs) -> bool:
+        raise AssertionError(f"整理阶段不应联网下载: {url}")
+
+    async def get_filesize(self, url: str, **kwargs):
+        raise AssertionError(f"整理阶段不应探测远端: {url}")
+
+    async def resolve_final_url(self, url: str, **kwargs) -> str:
+        raise AssertionError(f"整理阶段不应解析远端: {url}")
+
+
+@pytest.mark.asyncio
+async def test_organize_never_downloads_missing_resources(resource_store: ResourceStore, tmp_path: Path):
+    """缓存未命中时跳过附属文件, 整段落盘不发起网络请求."""
+    src = tmp_path / "src" / "MIDV-123.mp4"
+    src.parent.mkdir(parents=True)
+    src.write_bytes(b"movie")
+    mf = MediaFile(path=str(src), library_id=1)
+    meta = Metadata(
+        number="MIDV-123",
+        thumb_urls=["https://s/thumb.jpg"],
+        trailer_urls=["https://s/trailer.mp4"],
+        extrafanart_urls={"dmm": ["https://s/e1.jpg"]},
+    )
+    paths = _paths(tmp_path / "out")
+
+    result = await execute_file_operations(
+        media_file=mf,
+        metadata=meta,
+        paths=paths,
+        move_mode=MoveMode.COPY,
+        resource_store=resource_store,
+        file_info=parse_file_info(src),
+        web_client=cast("WebClient", NoNetworkClient()),
+        config=HotSettings(),
+        write_nfo=False,
+        allow_resource_download=False,
+    )
+
+    assert result.outcome is PlaceOutcome.PLACED
+    assert paths.video.exists()
+    assert not paths.thumb.exists()
+    assert not paths.trailer.exists()
+    assert not paths.extrafanart_dir.exists()

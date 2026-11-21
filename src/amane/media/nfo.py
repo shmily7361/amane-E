@@ -1,5 +1,8 @@
 """Kodi ``<movie>`` NFO, 供 Emby / Jellyfin / Kodi 读取."""
 
+from __future__ import annotations
+
+import os
 import re
 from io import StringIO
 from typing import TYPE_CHECKING
@@ -10,6 +13,7 @@ import structlog
 from ..utils.text import strip_illegal_xml_chars
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from ..db.models import Metadata
@@ -50,9 +54,19 @@ def _title_with_number(number: str, title: str) -> str:
     return f"{number} {text}".strip()
 
 
-async def write_nfo(metadata: Metadata, nfo_path: Path) -> bool:
+async def write_nfo(metadata: Metadata, nfo_path: Path, artifacts: Mapping[str, Path] | None = None) -> bool:
+    """``artifacts`` 给定时, 图片与预告片写库内相对路径, 避免媒体服务器按外链回源."""
     try:
         nfo_path.parent.mkdir(parents=True, exist_ok=True)
+
+        def local_or_url(url: str | None, key: str) -> str | None:
+            artifact = artifacts.get(key) if artifacts is not None else None
+            if artifact is None:
+                return url
+            try:
+                return os.path.relpath(artifact, nfo_path.parent).replace("\\", "/")
+            except ValueError:
+                return url
 
         code = StringIO()
         code.write('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n')
@@ -115,14 +129,17 @@ async def write_nfo(metadata: Metadata, nfo_path: Path) -> bool:
                     code.write(f"  <tag>{_escape_xml(tag)}</tag>\n")
                     code.write(f"  <genre>{_escape_xml(tag)}</genre>\n")
 
-        if metadata.poster_url:
-            code.write(f"  <poster>{_escape_xml(metadata.poster_url)}</poster>\n")
+        poster = local_or_url(metadata.poster_url, "poster")
+        if poster:
+            code.write(f"  <poster>{_escape_xml(poster)}</poster>\n")
 
-        if metadata.thumb_url:
-            code.write(f"  <cover>{_escape_xml(metadata.thumb_url)}</cover>\n")
+        cover = local_or_url(metadata.thumb_url, "thumb")
+        if cover:
+            code.write(f"  <cover>{_escape_xml(cover)}</cover>\n")
 
-        if metadata.trailer_url:
-            code.write(f"  <trailer>{_escape_xml(metadata.trailer_url)}</trailer>\n")
+        trailer = local_or_url(metadata.trailer_url, "trailer")
+        if trailer:
+            code.write(f"  <trailer>{_escape_xml(trailer)}</trailer>\n")
 
         if metadata.directors:
             for director in metadata.directors:

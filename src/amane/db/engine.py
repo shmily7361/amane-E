@@ -19,10 +19,17 @@ logger = structlog.get_logger()
 BUSY_TIMEOUT_MS = 30_000
 
 
-async def create_async_engine_from_path(db_path: Path | str, *, policy: DbLogPolicy | None = None) -> AsyncEngine:
+async def create_async_engine_from_path(
+    db_path: Path | str,
+    *,
+    policy: DbLogPolicy | None = None,
+    pool_size: int = 24,
+    max_overflow: int = 8,
+    pool_timeout: float = 60.0,
+) -> AsyncEngine:
     """先 ``upgrade_sqlite_database``, 再开业务引擎. 事务性 DDL 仅用于迁移连接.
 
-    ``policy`` 给出时注册慢路径日志.
+    ``policy`` 给出时注册慢路径日志. 池容量须覆盖 worker 并发与 API 余量, 避免借连接先于等写锁排队.
     """
     path = Path(db_path)
     try:
@@ -39,7 +46,13 @@ async def create_async_engine_from_path(db_path: Path | str, *, policy: DbLogPol
         connection.close()
 
     url = f"sqlite+aiosqlite:///{path}"
-    engine = create_async_engine(url, echo=False)
+    engine = create_async_engine(
+        url,
+        echo=False,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_timeout=pool_timeout,
+    )
 
     @event.listens_for(engine.sync_engine, "connect")
     def _set_sqlite_pragma(dbapi_conn, connection_record):

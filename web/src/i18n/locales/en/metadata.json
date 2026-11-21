@@ -80,6 +80,7 @@
     "title": "Edit film"
   },
   "detail": {
+    "writeToDisk": "Write to disk",
     "fields": {
       "title": "Title",
       "studio": "Studio",

@@ -20,7 +20,7 @@
 
 `CLEANUP` / `UPSCALE` 扫描 DB / Resource; `ACTOR_SCRAPE` 刮人物; `ACTOR_PUSH` 写媒体服务器; `R18_IMPORT` 导入 dump. 上述类型均不执行影片落盘.
 
-ORGANIZE 的入队来源只有三处: API / Agent 提交, retry 重跑, 库开启自动整理后的链式后继; DELETE 同样只经 API / Agent 提交. Handler 内不许直接 `create_task`, 后继一律经 `TaskResult.followups` 进入完成事务. Watcher 只注册文件并按 `automation` 入队 SCRAPE, 完整的扫描与落盘仍须提交 REFRESH. 手动把 `priority=-1` 用在整理上**不**使它等待刮削完成: 当时尚未刮削完成的文件会被跳过, 须再次运行 ORGANIZE.
+ORGANIZE 的入队来源只有四处: API / Agent 提交, retry 重跑, 库开启自动整理后的链式后继, 元数据编辑后的增量落盘; DELETE 同样只经 API / Agent 提交. Handler 内不许直接 `create_task`, 后继一律经 `TaskResult.followups` 进入完成事务. Watcher 只注册文件并按 `automation` 入队 SCRAPE, 完整的扫描与落盘仍须提交 REFRESH. 手动把 `priority=-1` 用在整理上**不**使它等待刮削完成: 当时尚未刮削完成的文件会被跳过, 须再次运行 ORGANIZE.
 
 ORGANIZE 只读取范围内的 `MediaFile` 行: 缺省为该库全部索引, 显式 `path` 按前缀过滤, `media_file_ids` 为勾选快照 (含其它库的 id 则 422); 后两者同时给出则 422. 库根必须是已存在的目录, 否则失败; `media_file_ids` 未给出且 path 为子目录时该子目录也必须存在 — 避免网络盘掉线时把选中行当失效索引删掉. 无 Metadata 的行与命中文件黑名单 / 最小视频大小 / 预告片规则的行跳过落盘; 路径落在 `.amane_trash` 内的行删除索引. SCAN_INVALID 的 `path` 同样可限定子目录. 整理默认与预告片跳过正则见 [data-model.md](data-model.md).
 
@@ -96,7 +96,7 @@ handler 之间复用的阶段逻辑, 不是一条可跳步的总管线:
 
 `execute_file_operations` 是落盘执行单元, 仅 ORGANIZE 经 `apply_file_operations` 调用. 不变量:
 
-- **整理 = 复制到库路径**: 优先用 Resource 已有文件, 缺失才现场 `acquire`; 复制哪些类型由 `Library.copy_resources` (或 payload 覆盖) 决定 (见 [data-model.md](data-model.md)). 目标路径上已有的产物一律按本次内容覆盖, 落盘按新文件处理 (临时文件加改名, 权限与 ACL 取自库目录而非 Resource), NFO 同理, 不判断是否已存在; fanart 没有刮削来源, 内容取 thumb, 因此随 thumb 一同重写, 该路径上的自备背景图会被覆盖, 也没有单独的关闭途径.
+- **整理 = 复制到库路径**: 只读 Resource 本地缓存, 缺失项跳过而不联网补下; 缺项须重新刮削写入缓存. 复制哪些类型由 `Library.copy_resources` (或 payload 覆盖) 决定 (见 [data-model.md](data-model.md)). 目标路径上已有的产物一律按本次内容覆盖, 落盘按新文件处理 (临时文件加改名, 权限与 ACL 取自库目录而非 Resource), NFO 同理, 不判断是否已存在; fanart 没有刮削来源, 内容取 thumb, 因此随 thumb 一同重写, 该路径上的自备背景图会被覆盖, 也没有单独的关闭途径.
 - **封面角标**: `watermark.enabled` 时 poster / thumb 副本按源文件 FileInfo 与条目类型叠 PNG; Resource 原图与 fanart 不修改.
 - **海报缺失**: 有码与无码在 `scraping.crop_poster` 开启时从已落盘 thumb 裁剪兜底; 其余类型不裁.
 - **目标占用**: 判定分为四态: 空闲 / 已就位 / 被占用 / 无法判定. 源与目标已是同一文件 (含硬链同一 inode) 时视为就位, 只跳过视频落盘, 附属文件照常重写; 被占用时跳过该文件, 不改名、不覆盖、不移动, 视频与字幕一视同仁, 由调用方按冲突记账, 冲突条目 (源路径 + 被占用的目标路径; 字幕冲突的 `path` 记字幕源路径, 不记视频源路径) 写进任务结果供界面显示, 且 `conflicts` 恒为 `conflicted` 条数的前缀 (差额只留在任务日志里), 冲突不自动解决, 未落盘的行留在源路径, 由用户自行处理. 无法判定 (stat 失败, 或两者在两次读取之间被替换) 按失败记账并带上 stat 的错误说明, 不得计入冲突或放宽为空闲. 存在性与占用判定都经 `existing_disk_path` (跟随符号链接; 读不出状态时按不存在处理, 不抛异常): 目标位置是断链符号链接时按空闲处理, MOVE 会替换它, SYMLINK 因 EEXIST 记失败. 判定与落盘之间还有窗口, MOVE / COPY 期间目标被外部写入仍会覆盖, 这条保证是尽力而为.
@@ -204,6 +204,8 @@ Watcher 仍不自动 ORGANIZE / DELETE: 三档 `automation` 都不提交整理, 
 `Library.auto_organize` 与 `automation` 正交 (none / watch 下手动刮削同样触发), 默认关闭, 只影响新后继.
 
 - **触发**: SCRAPE 成功路径按 `payload.media_file_id` 追加一条 ORGANIZE 后继, 范围是这一个文件 (单元素 `media_file_ids`), `priority=-1` 仅表示不抢占交互提交的任务.
-- **次序**: 后继在父的完成事务里创建, 父此刻已是 DONE, 因此整理必然发生在该文件刮削完成之后 — 不需要批次屏障, 也不依赖优先级. 按番号刮削没有 `MediaFile` (库因而未知), 不整理.
+- **次序**: 后继在父的完成事务里创建, 父此刻已是 DONE, 因此整理必然发生在该文件刮削完成之后 — 不需要批次屏障, 也不依赖优先级. 普通按番号刮削没有写回意图, 不整理; 元数据列表的「批量重刮」会置 `ScrapePayload.write_back`, 刮削成功后按 `metadata_id` 反查关联文件, 按库分组追加 ORGANIZE 后继 (不受 `auto_organize` 开关影响).
 - **失败**: 刮削业务失败 / 崩溃 / 取消都不产生整理 (重试成功后仍会链出). 完成事务失败与后继构建失败这两条路径下文件同样停在「已刮削未落盘」, 开关开着也不会自愈, 需手动整理或重新刮削.
 - **读取**: 整理结果只在任务列表与任务结果里读. 整理是对文件集合的操作, 不是库的属性, 多次整理之间不构成先后关系, 因此库响应不设整理摘要.
+
+元数据编辑 (PATCH / 裁剪海报 / 字段合并 / 条目合并) 成功后经 `api/support/incremental_organize.py` 按 `metadata_ids` 反查关联文件, 按库分组入队 ORGANIZE, 范围只含这些文件且 `prune_empty_dirs=False`. 入队失败只记告警, 不改变编辑请求的结果; NFO 与图片已就位时只重写附属文件, 不移动视频. 批量重刮走任务链而不是直接入队: 刮削完成后才按同样范围写回, 避免用旧元数据落盘.

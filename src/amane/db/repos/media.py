@@ -178,6 +178,27 @@ class MediaRepoMixin(RepositoryMixinBase):
             result = await session.exec(stmt)
             return list(result.all())
 
+    async def list_media_files_page(
+        self,
+        *,
+        library_id: int,
+        after_id: int = 0,
+        limit: int,
+    ) -> list[MediaFile]:
+        """按 id 游标返回一页索引, 供大库扫描流式处理.
+
+        游标只向前推进, 页内删除不会影响后续页; 与 ``OFFSET`` 不同, 深翻页成本恒定.
+        """
+        stmt = (
+            select(MediaFile)
+            .where(col(MediaFile.library_id) == library_id, col(MediaFile.id) > after_id)
+            .order_by(col(MediaFile.id).asc())
+            .limit(limit)
+        )
+        async with self._session() as session:
+            result = await session.exec(stmt)
+            return list(result.all())
+
     async def count_media_files(
         self,
         status: Iterable[MediaFileStatus] | None = None,

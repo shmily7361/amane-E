@@ -1,18 +1,21 @@
 """测试 ResourceStore 的派生资源 (裁剪), 就地超分与获取失败的收尾."""
 
 import asyncio
-from typing import TYPE_CHECKING, Any, ClassVar
+from pathlib import Path
+from typing import Any, ClassVar, cast
 from unittest.mock import AsyncMock
 
 import pytest
 
 from amane.media import ResourceStore, UpscaleOutcome, derived_locator
-from amane.media.resource_store import RESOURCE_URL_PREFIX, _is_placeholder_url, internal_url_hash
+from amane.media.resource_store import (
+    EXTRAFANART_CONCURRENCY,
+    RESOURCE_URL_PREFIX,
+    _is_placeholder_url,
+    internal_url_hash,
+)
 from amane.net.egress import EgressPolicy
 from amane.net.http import RateLimiters, WebClient
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def test_derived_locator_deterministic():
@@ -707,3 +710,29 @@ class TestAcquireConcurrency:
         finally:
             released.set()
             await asyncio.gather(first, second, return_exceptions=True)
+
+
+class TestExtrafanartConcurrency:
+    @pytest.mark.asyncio
+    async def test_acquire_extrafanart_bounds_parallel_downloads(
+        self, resource_store: ResourceStore, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """剧照下载并发受限, 不会瞬时借出超过连接池余量的数据库连接."""
+        active = 0
+        peak = 0
+
+        async def fake_acquire(url: str, client: object) -> object:
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0)
+            active -= 1
+            return tmp_path / url.rsplit("/", 1)[-1]
+
+        monkeypatch.setattr(resource_store, "acquire", fake_acquire)
+        urls = [f"https://pics.example/{i}.jpg" for i in range(12)]
+
+        paths = await resource_store.acquire_extrafanart({"site": urls}, ["site"], cast("WebClient", None))
+
+        assert len(paths) == 12
+        assert peak <= EXTRAFANART_CONCURRENCY

@@ -208,6 +208,15 @@ class ColdSettings(BaseSettings):
     supervised: bool = False
     """为真时挂载重启端点 (AMANE_SUPERVISED=1)."""
 
+    db_pool_size: int = Field(default=24, ge=5, le=200)
+    """主库连接池常驻连接数 (AMANE_DB_POOL_SIZE). 大库多 worker 时需大于 worker.concurrency."""
+
+    db_max_overflow: int = Field(default=8, ge=0, le=100)
+    """主库连接池临时连接数 (AMANE_DB_MAX_OVERFLOW)."""
+
+    db_pool_timeout: float = Field(default=60.0, ge=5.0, le=300.0)
+    """借连接等待上限秒数 (AMANE_DB_POOL_TIMEOUT), 须大于 busy_timeout."""
+
     update_url: str | None = None
     """覆盖 GitHub /releases/latest. 空 = 官方 API."""
 
@@ -359,7 +368,7 @@ class SiteConfig(BaseModel):
 
 class ScrapingConfig(BaseModel):
     download_resources: list[DownloadableResource] = Field(
-        default_factory=lambda: [r for r in DownloadableResource if r != DownloadableResource.trailer],
+        default_factory=lambda: list(DownloadableResource),
         description="刮削时自动下载到 Resource 目录的资源类型",
     )
     crop_poster: bool = True

@@ -41,6 +41,7 @@ from ..models import (
     UserTagResponse,
     to_media_file_response,
 )
+from ..support.incremental_organize import enqueue_incremental_organize
 from ..support.metadata_filters import MetadataFilters, parse_metadata_filters, require_known_definition
 from .saved_queries import resolve_saved_query_id_subquery
 
@@ -237,6 +238,8 @@ async def batch_scrape_metadata(req: MetadataBatchScrapeRequest, repo: RepoDep) 
                 number=metadata.number,
                 content_type=req.content_type if req.content_type is not None else metadata.content_type,
                 use_cache=req.use_cache,
+                # 用户在影片页/列表显式重刮: 成功后只把关联文件写回本地.
+                write_back=True,
             )
         )
     # 批量提交动辄数百条, 逐条提交会重复付出事务开销
@@ -295,6 +298,7 @@ async def merge_metadata_entries(req: MetadataMergeEntriesRequest, repo: RepoDep
         source_ids=req.source_ids,
         rescrape_task_id=rescrape_task_id,
     )
+    await enqueue_incremental_organize(repo, [req.target_id])
     return to_resp(MetadataResponse, metadata)
 
 
@@ -357,6 +361,7 @@ async def update_metadata(metadata_id: int, req: PartialMetadata, repo: RepoDep)
     if metadata is None:
         raise HTTPException(status_code=404, detail="影片不存在")
     logger.info("metadata updated", metadata_id=metadata_id, fields=list(updates.keys()))
+    await enqueue_incremental_organize(repo, [metadata_id])
     return to_resp(MetadataResponse, metadata)
 
 
@@ -422,6 +427,7 @@ async def crop_poster_from_thumb(
         rotation=req.rotation,
         poster_url=poster_url,
     )
+    await enqueue_incremental_organize(repo, [metadata_id])
     return to_resp(MetadataResponse, updated)
 
 
@@ -447,4 +453,5 @@ async def merge_metadata(metadata_id: int, req: MergeRequest, repo: RepoDep) -> 
     updated = await repo.update_metadata(metadata_id, mode=WriteMode.MANUAL, **cast("MetadataFields", updates))
     assert updated is not None
     logger.info("metadata merged", metadata_id=metadata_id, selections=req.selections)
+    await enqueue_incremental_organize(repo, [metadata_id])
     return to_resp(MetadataResponse, updated)

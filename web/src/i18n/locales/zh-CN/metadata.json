@@ -79,6 +79,7 @@
     "title": "编辑影片"
   },
   "detail": {
+    "writeToDisk": "写入本地文件",
     "fields": {
       "title": "标题",
       "studio": "制作商",

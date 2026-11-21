@@ -32,6 +32,8 @@ r18 库由项目导入 / 管理但 schema 不受我们控制, **不能纳入 Ale
 
 `journal_mode=WAL` 持久化在库文件里, 由 `db/engine.py::create_async_engine_from_path` 在创建引擎前设置一次; 逐连接重设会与并发写事务争用排他锁. `synchronous=NORMAL` / `busy_timeout` / 外键是连接级 PRAGMA, 只能在 `db/engine.py` 的连接钩子里逐连接下发, 别处另开业务引擎会退回驱动默认. 写锁被占用时连接等待至多 `busy_timeout` 才报 `database is locked`, 临界区短于该值即不失败. `synchronous=NORMAL` 的取舍限于 WAL 已开启: 掉电丢最近若干已提交事务而不损坏库, 换掉逐笔 fsync 拉长的持锁时间.
 
+主库连接池按 worker 并发与 API 余量配置: `AMANE_DB_POOL_SIZE` (默认 24), `AMANE_DB_MAX_OVERFLOW` (默认 8), `AMANE_DB_POOL_TIMEOUT` (默认 60 秒). `pool_timeout` 须大于 `busy_timeout`, 使等待写锁时不至于先耗尽连接池. 大库扫描按 id 游标分页, 不使用 `OFFSET` 深翻页.
+
 任务入队在 SQLite 写锁内判定互斥并分配 id; 创建与重试先执行 `BEGIN IMMEDIATE`, 后继复用父完成 UPDATE 的事务. 进程内仍按 Repository 串行化, 见 [task-system.md](task-system.md).
 
 ## 启动期自动迁移与安全网
