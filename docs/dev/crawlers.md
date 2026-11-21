@@ -75,7 +75,7 @@ CrawlerFactory (缓存实例)
 
 ## 限速
 
-`RateLimiters` (`net/http.py`) 为每个 host 维护独立的平滑漏桶, 优先级 (高 → 低): `network.rate_limits[host]` → `scraping.site_config[site].rate_limit` → `network.default_rate_limit`. host 是更精确的颗粒度 (多个站点可能共享同一 host), 因此 host 优先级高于 site. 实现是容量 1 的严格平滑桶, 不允许突发 — 突发会触发反爬检测.
+`RateLimiters` (`net/http.py`) 为每个 host 维护独立的平滑漏桶, 优先级 (高 → 低): `network.rate_limits[host]` → `scraping.site_config[site].rate_limit` → `network.default_rate_limit`. host 是更精确的颗粒度 (多个站点可能共享同一 host), 因此 host 优先级高于 site. 实现是容量 1 的严格平滑桶, 不允许突发 — 突发会触发反爬检测. 分片下载把同一 host 的多个 Range 分片视为一次逻辑请求, 每次下载每 host 只取一个许可; 分片必须是 206 且长度与 `Content-Range` 吻合, 否则整份回退到限长流式下载, 不允许把忽略 Range 的响应按偏移写入.
 
 ## 代理
 

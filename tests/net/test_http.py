@@ -136,6 +136,55 @@ class _RangeStubSession:
         return _StubResponse(url=url, content=self._body[start : end + 1], status=206)
 
 
+class _BadRangeStubSession:
+    """对 Range 返回异常应答: 忽略 Range 的 200 整份正文, 或 206 但区间头/长度不符."""
+
+    def __init__(self, body: bytes, mode: str) -> None:
+        self._body = body
+        self._mode = mode
+        self.ranges: list[tuple[int, int]] = []
+        self.full_requests = 0
+
+    async def request(self, method: str, url: str, **kwargs: Any) -> _StubResponse:
+        if method == "HEAD":
+            return _StubResponse(url=url, headers={"Content-Length": str(len(self._body))})
+        rng = (kwargs.get("headers") or {}).get("Range")
+        if rng is None:
+            self.full_requests += 1
+            return _StubResponse(url=url, content=self._body, chunks=[self._body], stream=True)
+        start, end = (int(v) for v in rng.removeprefix("bytes=").split("-"))
+        self.ranges.append((start, end))
+        if self._mode == "status_200":
+            return _StubResponse(url=url, content=self._body, status=200)
+        if self._mode == "bad_length":
+            return _StubResponse(url=url, content=self._body[start:end], status=206)
+        return _StubResponse(
+            url=url,
+            content=self._body[start : end + 1],
+            status=206,
+            headers={"Content-Range": f"bytes 0-{end - start}/{len(self._body)}"},
+        )
+
+
+class _CountingLimiter:
+    def __init__(self, calls: Counter[str], host: str) -> None:
+        self._calls = calls
+        self._host = host
+
+    async def acquire(self) -> None:
+        self._calls[self._host] += 1
+
+
+class _CountingLimiters:
+    """记录每个 host 的限速许可次数, 验证分片不会逐片排队."""
+
+    def __init__(self) -> None:
+        self.calls: Counter[str] = Counter()
+
+    def get(self, host: str | None, *, rate: float | None = None) -> _CountingLimiter:
+        return _CountingLimiter(self.calls, host or "")
+
+
 class TestSameOriginReferer:
     @pytest.mark.parametrize(
         ("host", "headers", "expected"),
@@ -508,6 +557,34 @@ class TestChunkedDownload:
         attempts = Counter(session.ranges)
         assert attempts[(_CHUNK, 2 * _CHUNK - 1)] == 3
         assert set(attempts.values()) == {1, 3}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("mode", ["status_200", "bad_length", "bad_content_range"])
+    async def test_bad_range_response_falls_back_to_full_download(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path, mode: str
+    ):
+        """上游不按 Range 应答时回退整份流式下载, 不把错误分片按偏移写入."""
+        session = _BadRangeStubSession(_CHUNK_BODY, mode)
+        client = _network_client(monkeypatch, session)
+
+        assert await client.download("https://pics.example/a.jpg", tmp_path / "a.jpg") is True
+
+        assert len(session.ranges) == 4
+        assert session.full_requests == 1
+        assert (tmp_path / "a.jpg").read_bytes() == _CHUNK_BODY
+
+    @pytest.mark.asyncio
+    async def test_chunked_download_takes_one_rate_permit_per_host(self, monkeypatch: pytest.MonkeyPatch, tmp_path):
+        """探测与整批分片各取一次许可, 不随分片数放大限速等待."""
+        session = _RangeStubSession(_CHUNK_BODY)
+        client = _network_client(monkeypatch, session)
+        limiters = _CountingLimiters()
+        monkeypatch.setattr(client, "_limiters", limiters)
+
+        assert await client.download("https://pics.example/a.jpg", tmp_path / "a.jpg") is True
+
+        assert limiters.calls == Counter({"pics.example": 2})
+        assert (tmp_path / "a.jpg").read_bytes() == _CHUNK_BODY
 
 
 class TestEgressGuard:

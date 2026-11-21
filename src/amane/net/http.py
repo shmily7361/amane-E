@@ -56,6 +56,34 @@ def _rewrites_to_get(status: int, method: str) -> bool:
 _MAX_CHUNKS = 4096
 """分片下载的区间数上限. 上游自称的 ``Content-Length`` 直接决定区间数, 不设上限即内存与任务数无界."""
 
+
+class _ChunkRangeUnsupported(Exception):
+    """上游未按请求的 Range 返回分片; 调用方回退到整份限长下载."""
+
+
+def _is_valid_chunk(resp: Response, start: int, end: int) -> bool:
+    """分片必须是 206、长度吻合, 且带 Content-Range 时起点/终点也要吻合.
+
+    部分图床对 Range 返回 200 + 整份正文; 按偏移写入会相互覆盖, 静默产出损坏图片.
+    """
+    if resp.status_code != 206 or len(resp.content) != end - start + 1:
+        return False
+    header = resp.headers.get("Content-Range")
+    if not header:
+        return True
+    unit, sep, spec = header.partition(" ")
+    if not sep or unit.lower() != "bytes" or "/" not in spec:
+        return False
+    first, sep, rest = spec.partition("-")
+    last, sep2, _ = rest.partition("/")
+    if not sep or not sep2:
+        return False
+    try:
+        return int(first) == start and int(last) == end
+    except ValueError:
+        return False
+
+
 _IMPERSONATE_REJECTED_STATUSES = frozenset({403, 406})
 """判定「站点拦下此指纹」的状态码: 站点按 TLS 指纹放行时给出的典型响应;
 404 表示资源不存在, 换指纹无意义."""
@@ -164,6 +192,26 @@ class RateLimiters:
 def _make_limiter(rate: float) -> AsyncLimiter:
     """``AsyncLimiter(1, 1/rate)``: 桶容量 1, 无突发."""
     return AsyncLimiter(1, 1 / rate)
+
+
+class _RateLimitPermits:
+    """一次逻辑下载内按 host 去重限速许可.
+
+    分片下载对同一 host 并发发多个 Range 请求; 逐个取严格平滑桶的许可会把下载耗时放大到
+    ``分片数 × 限速间隔``. 这里让同一逻辑下载在某 host 上只取一次许可, 重定向到新 host 时仍各取一次.
+    """
+
+    def __init__(self, limiters: RateLimiters) -> None:
+        self._limiters = limiters
+        self._acquired: set[str | None] = set()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self, host: str | None) -> None:
+        async with self._lock:
+            if host in self._acquired:
+                return
+            self._acquired.add(host)
+            await self._limiters.get(cast(str, host)).acquire()
 
 
 def site_proxy_overrides(
@@ -277,6 +325,7 @@ class WebClient:
         max_attempts: int | None = None,
         egress: EgressPolicy | None = None,
         stream: bool = False,
+        permits: _RateLimitPermits | None = None,
     ) -> Response:
         """``ok_statuses`` 额外视为成功 (例如 RSS 304), 不重试、不当失败. 重试用尽后抛 ``RequestError``.
 
@@ -310,6 +359,7 @@ class WebClient:
                 ok_statuses=ok_statuses,
                 max_attempts=max_attempts,
                 stream=stream,
+                permits=permits,
             )
 
         current_method: HttpMethod = method
@@ -330,6 +380,7 @@ class WebClient:
                 ok_statuses=ok_statuses,
                 max_attempts=max_attempts,
                 stream=stream,
+                permits=permits,
             )
             location = resp.headers.get("Location") if resp.status_code in _REDIRECT_STATUSES else None
             if not location:
@@ -359,11 +410,15 @@ class WebClient:
         ok_statuses: frozenset[int] | None = None,
         max_attempts: int | None = None,
         stream: bool = False,
+        permits: _RateLimitPermits | None = None,
     ) -> Response:
         """单次请求的尝试循环; 重定向策略由 ``request`` 决定."""
         host = httpx.URL(url).host
         headers = _with_same_origin_referer(host, headers, self._same_origin_referer_hosts)
-        await self._limiters.get(host).acquire()
+        if permits is None:
+            await self._limiters.get(host).acquire()
+        else:
+            await permits.acquire(host)
 
         key = host or url
         total_attempts = 1 + self._max_retries
@@ -434,7 +489,11 @@ class WebClient:
                         impersonate=rotated,
                     )
                     # 轮换重发是同一 host 的额外请求, 与首次请求一样先取限速许可: 严格平滑桶不允许突发.
-                    await self._limiters.get(host).acquire()
+                    # 分片下载共享的 permits 按 host 去重, 避免每片都排队.
+                    if permits is None:
+                        await self._limiters.get(host).acquire()
+                    else:
+                        await permits.acquire(host)
                     await self._close(resp)
                     continue
 
@@ -742,8 +801,9 @@ class WebClient:
             return False
 
         semaphore = asyncio.Semaphore(self._download_concurrency)
+        permits = _RateLimitPermits(self._limiters)
 
-        async def _fetch_chunk(start: int, end: int) -> RequestFailure | None:
+        async def _fetch_chunk(start: int, end: int) -> RequestFailure | _ChunkRangeUnsupported | None:
             async with semaphore:
                 try:
                     resp = await self.request(
@@ -752,10 +812,12 @@ class WebClient:
                         headers={"Range": f"bytes={start}-{end}"},
                         use_proxy=use_proxy,
                         egress=egress,
+                        permits=permits,
                     )
                 except RequestError as e:
                     return e.failure or RequestFailure(kind=FailureKind.UNEXPECTED, message=e.message)
-                # 不校验长度与 Content-Range: 上游忽略 Range 时返回整份内容, 这里按偏移写入, 落盘字节数与分片不符.
+                if not _is_valid_chunk(resp, start, end):
+                    return _ChunkRangeUnsupported(f"invalid Range response for bytes={start}-{end}")
                 async with aiofiles.open(dest, "rb+") as f:
                     await f.seek(start)
                     await f.write(resp.content)
@@ -764,6 +826,9 @@ class WebClient:
         results = await asyncio.gather(*[_fetch_chunk(s, e) for s, e in parts], return_exceptions=True)
 
         for i, result in enumerate(results):
+            if isinstance(result, _ChunkRangeUnsupported):
+                logger.warning("upstream ignored Range, falling back to full download", url=url, reason=str(result))
+                return await self._download_bounded(url, dest, use_proxy=use_proxy, egress=egress, max_bytes=file_size)
             if isinstance(result, BaseException):
                 logger.error("chunk download failed", chunk=i, url=url, error=str(result))
                 return False
