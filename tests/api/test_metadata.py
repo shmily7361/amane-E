@@ -323,6 +323,7 @@ class TestMetadataHttp:
         assert tasks[0].payload["number"] == target.number
         assert tasks[0].payload["content_type"] == target.content_type.value
         assert set(tasks[0].payload["use_cache"]) == {"metadata", "trans"}
+        assert tasks[0].payload["write_back"] is True
 
     @pytest.mark.asyncio(loop_scope="function")
     async def test_crop_poster_http(self, client: AsyncClient, repo: Repository, app: FastAPI):
@@ -494,10 +495,57 @@ class TestIncrementalWriteback:
             metadata_id=meta.id,
         )
         assert media.id is not None
+        other_meta = await repo.upsert_metadata(number="WB-002")
+        assert other_meta.id is not None
+        other = await repo.create_media_file(
+            library_id=1,
+            path="/video/WB-002.mp4",
+            number="WB-002",
+            metadata_id=other_meta.id,
+        )
+        assert other.id is not None
 
         response = await client.patch(f"metadata/{meta.id}", json={"title": "增量落盘"})
 
         assert response.status_code == 200
+        tasks = await repo.list_tasks(task_types=[TaskType.ORGANIZE], limit=10)
+        assert len(tasks) == 1
+        payload = tasks[0].payload
+        assert payload["media_file_ids"] == [media.id]
+        assert other.id not in payload["media_file_ids"]
+        assert payload["prune_empty_dirs"] is False
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_crop_poster_enqueues_organize_for_linked_files(
+        self, client: AsyncClient, repo: Repository, app: FastAPI, stop_worker: None
+    ) -> None:
+        """裁剪海报后只写回该条目关联文件, 不触发全库整理."""
+        meta = await repo.upsert_metadata(number="WB-CROP", thumb_urls=["https://example.com/t.jpg"])
+        assert meta.id is not None
+        media = await repo.create_media_file(
+            library_id=1,
+            path="/video/WB-CROP.mp4",
+            number="WB-CROP",
+            metadata_id=meta.id,
+        )
+        assert media.id is not None
+
+        async def fake_download(url: str, dest: Path, **kwargs: object) -> bool:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (800, 538), "blue").save(dest)
+            return True
+
+        async def fake_resolve(url: str, **kwargs: object) -> str:
+            return url
+
+        app.state.runtime.web_client.download = fake_download  # type: ignore[method-assign]
+        app.state.runtime.web_client.resolve_final_url = fake_resolve  # type: ignore[method-assign]
+
+        resp = await client.post(
+            f"metadata/{meta.id}/crop-poster", json={"left": 0, "top": 0, "right": 538, "bottom": 538}
+        )
+        assert resp.status_code == 200
+
         tasks = await repo.list_tasks(task_types=[TaskType.ORGANIZE], limit=10)
         assert len(tasks) == 1
         payload = tasks[0].payload

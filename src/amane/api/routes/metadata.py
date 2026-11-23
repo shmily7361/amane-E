@@ -289,7 +289,7 @@ async def merge_metadata_entries(req: MetadataMergeEntriesRequest, repo: RepoDep
     if req.rescrape:
         task = await repo.create_task(
             TaskType.SCRAPE,
-            ScrapePayload(number=metadata.number, content_type=metadata.content_type),
+            ScrapePayload(number=metadata.number, content_type=metadata.content_type, write_back=True),
         )
         rescrape_task_id = task.id
     logger.info(

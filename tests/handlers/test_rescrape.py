@@ -38,6 +38,7 @@ async def test_fans_out_oldest_first_with_limit(repo: Repository):
     for f in followups:
         assert f.priority == -1
         assert set(f.payload["use_cache"]) == {"metadata", "trans"}
+        assert f.payload["write_back"] is True
 
 
 @pytest.mark.asyncio(loop_scope="function")

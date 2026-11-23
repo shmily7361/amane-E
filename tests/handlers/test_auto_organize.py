@@ -122,6 +122,15 @@ async def test_explicit_write_back_chains_linked_files(repo: Repository, tmp_pat
     metadata_id = first.result.metadata_id
     assert metadata_id is not None
 
+    other_meta = await repo.upsert_metadata(number="OTHER-001")
+    assert other_meta.id is not None
+    other = await repo.create_media_file(
+        lib_id,
+        path=str(tmp_path / "lib" / "incoming" / "OTHER-001.mp4"),
+        metadata_id=other_meta.id,
+    )
+    assert other.id is not None
+
     result = await handler.handle(ScrapePayload(number="MIDV-123", write_back=True))
     assert result.success is True
     organize = _organize_followups(result)
@@ -130,6 +139,7 @@ async def test_explicit_write_back_chains_linked_files(repo: Repository, tmp_pat
     assert organize[0].priority == -1
     assert organize[0].payload["library_id"] == lib_id
     assert organize[0].payload["media_file_ids"] == [media_id]
+    assert other.id not in organize[0].payload["media_file_ids"]
     assert organize[0].payload["prune_empty_dirs"] is False
 
 

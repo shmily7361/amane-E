@@ -69,6 +69,8 @@ class RescrapeHandler(TaskHandler[RescrapePayload, RescrapeResult]):
                     number=meta.number,
                     content_type=meta.content_type,
                     use_cache=_USE_CACHE,
+                    # 只写回这次真正重刮的条目关联文件, 不做全库整理.
+                    write_back=True,
                 ).model_dump(mode="json"),
                 priority=-1,
             )

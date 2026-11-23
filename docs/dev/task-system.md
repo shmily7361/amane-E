@@ -195,7 +195,7 @@ Metadata 是一等公民, CLEANUP **从不**因「无关联 MediaFile」删除 M
 
 **UPSCALE 例行任务**: 扫描全部 `Resource`, 就地超分低质图, `limit` 限单次批量.
 
-**RESCRAPE (滚动补刮)**: 与 `RefreshHandler` 同构的 fan-out — 批量任务只选目标并下发既有刮削. `targets` (`metadata` / `actor`) 每个已选项各自取一批旧条目, 以 `priority=-1` 入队非 force 任务 (见 `handlers/rescrape.py`). 复用 per-site raw 快照仅补缺失站点, 聚合阶段重放当前配置, 因此同时承担「配置变更后再次运行生效」; 它与 SCRAPE 成功后的链式 ACTOR_SCRAPE 正交 (链式跳过 `Actor.raw` 已非空的演员).
+**RESCRAPE (滚动补刮)**: 与 `RefreshHandler` 同构的 fan-out — 批量任务只选目标并下发既有刮削. `targets` (`metadata` / `actor`) 每个已选项各自取一批旧条目, 以 `priority=-1` 入队非 force 任务 (见 `handlers/rescrape.py`). 复用 per-site raw 快照仅补缺失站点, 聚合阶段重放当前配置, 因此同时承担「配置变更后再次运行生效」; 它与 SCRAPE 成功后的链式 ACTOR_SCRAPE 正交 (链式跳过 `Actor.raw` 已非空的演员). 影片条目的 SCRAPE 带 `write_back=True`, 刮削成功后只写回该条目关联文件.
 
 Watcher 仍不自动 ORGANIZE / DELETE: 三档 `automation` 都不提交整理, 整理只来自刮削链或用户提交. 事件归属随事件携带, 见 [watcher.md](watcher.md) / [data-model.md](data-model.md).
 
@@ -204,7 +204,7 @@ Watcher 仍不自动 ORGANIZE / DELETE: 三档 `automation` 都不提交整理, 
 `Library.auto_organize` 与 `automation` 正交 (none / watch 下手动刮削同样触发), 默认关闭, 只影响新后继.
 
 - **触发**: SCRAPE 成功路径按 `payload.media_file_id` 追加一条 ORGANIZE 后继, 范围是这一个文件 (单元素 `media_file_ids`), `priority=-1` 仅表示不抢占交互提交的任务.
-- **次序**: 后继在父的完成事务里创建, 父此刻已是 DONE, 因此整理必然发生在该文件刮削完成之后 — 不需要批次屏障, 也不依赖优先级. 普通按番号刮削没有写回意图, 不整理; 元数据列表的「批量重刮」会置 `ScrapePayload.write_back`, 刮削成功后按 `metadata_id` 反查关联文件, 按库分组追加 ORGANIZE 后继 (不受 `auto_organize` 开关影响).
+- **次序**: 后继在父的完成事务里创建, 父此刻已是 DONE, 因此整理必然发生在该文件刮削完成之后 — 不需要批次屏障, 也不依赖优先级. 普通按番号刮削没有写回意图, 不整理; 元数据列表的「批量重刮」、RESCRAPE 影片扇出、条目合并后的重刮会置 `ScrapePayload.write_back`, 刮削成功后按 `metadata_id` 反查关联文件, 按库分组追加 ORGANIZE 后继 (不受 `auto_organize` 开关影响).
 - **失败**: 刮削业务失败 / 崩溃 / 取消都不产生整理 (重试成功后仍会链出). 完成事务失败与后继构建失败这两条路径下文件同样停在「已刮削未落盘」, 开关开着也不会自愈, 需手动整理或重新刮削.
 - **读取**: 整理结果只在任务列表与任务结果里读. 整理是对文件集合的操作, 不是库的属性, 多次整理之间不构成先后关系, 因此库响应不设整理摘要.
 
