@@ -1,5 +1,6 @@
 """测试 file ops 消费已物化 URL (内部派生 / 外部) + trailer 落盘."""
 
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -40,6 +41,27 @@ class FakeClient:
 def _pixel(path: Path) -> tuple[int, int, int]:
     with Image.open(path) as img:
         return cast("tuple[int, int, int]", img.convert("RGB").getpixel((0, 0)))
+
+
+def test_library_write_skips_unchanged_attachment(tmp_path: Path) -> None:
+    """全库改名整理时, 内容未变的附件不再重复复制."""
+    src = tmp_path / "resources" / "trailer.mp4"
+    dst = tmp_path / "lib" / "trailer.mp4"
+    src.parent.mkdir(parents=True)
+    dst.parent.mkdir(parents=True)
+    src.write_bytes(b"same bytes")
+
+    _write_into_library(src, dst)
+    assert dst.read_bytes() == b"same bytes"
+    src_stat = src.stat()
+    assert dst.stat().st_mtime_ns == src_stat.st_mtime_ns
+
+    # 目标被外部改写但大小与时间戳仍与源一致时, 短路会跳过写入 (size + mtime 判据).
+    dst.write_bytes(b"sentinelxx")
+    assert len(b"sentinelxx") == len(b"same bytes")
+    os.utime(dst, ns=(src_stat.st_atime_ns, src_stat.st_mtime_ns))
+    _write_into_library(src, dst)
+    assert dst.read_bytes() == b"sentinelxx"
 
 
 def _paths(base: Path) -> ResolvedPaths:

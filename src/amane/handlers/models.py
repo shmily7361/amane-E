@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Sequence
 from enum import StrEnum
 from typing import TYPE_CHECKING, Literal
 
@@ -140,6 +142,15 @@ class ScrapeResult(BaseModel):
 # --- ORGANIZE ---
 
 
+def organize_dedupe_key(library_id: int, media_file_ids: Sequence[int]) -> int:
+    """增量写回的任务去重键: 同库同文件集合只保留一条活跃 ORGANIZE.
+
+    取 SHA-256 前 8 字节并清掉符号位, 保证落在 SQLite INTEGER 的正数范围.
+    """
+    raw = f"{library_id}:{','.join(str(i) for i in sorted(set(media_file_ids)))}".encode()
+    return int.from_bytes(hashlib.sha256(raw).digest()[:8], "big") & 0x7FFF_FFFF_FFFF_FFFF
+
+
 class OrganizePayload(LibraryBase):
     """write_nfo / copy_resources 为 None 时沿用 Library 设置.
 
@@ -159,6 +170,10 @@ class OrganizePayload(LibraryBase):
     prune_empty_dirs: bool = Field(
         default=True,
         description="移动后删除本次腾空的目录 (库根与 .amane_trash 除外); 复制 / 硬链接 / 符号链接方式不移走源文件, 该开关无效",
+    )
+    dedupe_key: int | None = Field(
+        default=None,
+        description="增量写回去重键; 同键已有 queued/running 任务时复用, 手动提交不带此键",
     )
 
     async def resolve(self, repo: Repository) -> None:

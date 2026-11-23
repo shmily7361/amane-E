@@ -53,8 +53,10 @@ class RefreshHandler(TaskHandler[RefreshPayload, RefreshResult]):
 
         added = removed = scrape = subtitles = 0
 
-        existing = await self._repo.list_media_files(library_id=payload.library_id, limit=None)
-        existing_by_path = {nfc_path(f.path): f for f in existing}
+        existing_by_path: dict[str, MediaFile] = {}
+        async for f in self._repo.iter_media_files_page(payload.library_id):
+            existing_by_path[nfc_path(f.path)] = f
+        existing = list(existing_by_path.values())
 
         if payload.scan:
             want_add = ScanMode.add in payload.scan
@@ -126,9 +128,8 @@ class RefreshHandler(TaskHandler[RefreshPayload, RefreshResult]):
                     deleted, _ = await self._repo.batch_delete_media_files(ids)
                     removed += deleted
 
-        media_files = await self._repo.list_media_files(
-            library_id=payload.library_id, status=payload.scrape, limit=None
-        )
+        scrape_statuses = payload.scrape
+        media_files = [f async for f in self._repo.iter_media_files_page(payload.library_id, statuses=scrape_statuses)]
 
         # 扇出 SCRAPE; 只描述后继, 由完成事务创建.
         followups = []

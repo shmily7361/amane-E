@@ -19,6 +19,7 @@ from amane.agent.runtime import build_agent
 from amane.agent.sql import ReadonlySqlSandbox
 from amane.agent.tools import TOOL_OK, AgentDeps, build_explore_toolset
 from amane.config import AgentConfig
+from amane.db.models import TaskType
 from amane.db.repository import Repository
 from amane.enums import MetadataField
 from amane.parsing import ContentType
@@ -119,6 +120,7 @@ async def test_enqueue_scrape_takes_entry_content_type(write_deps: AgentDeps) ->
 
     tasks = await write_deps.repo.list_tasks()
     assert sorted(task.payload["content_type"] for task in tasks) == ["censored", "uncensored"]
+    assert all(task.payload["write_back"] is True for task in tasks)
 
 
 @pytest.mark.asyncio
@@ -133,6 +135,28 @@ async def test_update_metadata_tool(write_deps: AgentDeps) -> None:
     assert row.title == "Patched"
     # 助理写入自动加锁.
     assert row.locked_fields == ["title"]
+
+
+@pytest.mark.asyncio
+async def test_update_metadata_tool_enqueues_incremental_organize(write_deps: AgentDeps) -> None:
+    """聊天里改字段与控制台 PATCH 一样要写回关联文件."""
+    repo = write_deps.repo
+    meta = await repo.upsert_metadata(number="ZZZ-WB", title="Orig")
+    assert meta.id is not None
+    lib = await repo.create_library(name="agent-wb", path="/media")
+    assert lib.id is not None
+    media = await repo.create_media_file(lib.id, path="/media/ZZZ-WB.mp4", metadata_id=meta.id)
+    assert media.id is not None
+
+    out = await _tool_fn("update_metadata")(
+        ToolCallContext(write_deps), metadata_id=meta.id, patch={"title": "Agent writeback"}
+    )
+    assert out == TOOL_OK
+
+    tasks = await repo.list_tasks(task_types=[TaskType.ORGANIZE])
+    assert len(tasks) == 1
+    assert tasks[0].payload["media_file_ids"] == [media.id]
+    assert tasks[0].payload["prune_empty_dirs"] is False
 
 
 @pytest.mark.asyncio

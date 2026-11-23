@@ -1,4 +1,4 @@
-from collections.abc import Iterable, Sequence
+from collections.abc import AsyncIterator, Iterable, Sequence
 from typing import NamedTuple, Unpack
 
 from sqlalchemy import delete as sqla_delete
@@ -184,6 +184,7 @@ class MediaRepoMixin(RepositoryMixinBase):
         library_id: int,
         after_id: int = 0,
         limit: int,
+        statuses: Iterable[MediaFileStatus] | None = None,
     ) -> list[MediaFile]:
         """按 id 游标返回一页索引, 供大库扫描流式处理.
 
@@ -195,9 +196,31 @@ class MediaRepoMixin(RepositoryMixinBase):
             .order_by(col(MediaFile.id).asc())
             .limit(limit)
         )
+        if statuses is not None:
+            stmt = stmt.where(col(MediaFile.status).in_(list(statuses)))
         async with self._session() as session:
             result = await session.exec(stmt)
             return list(result.all())
+
+    async def iter_media_files_page(
+        self,
+        library_id: int,
+        *,
+        statuses: Iterable[MediaFileStatus] | None = None,
+        page_size: int = 500,
+    ) -> AsyncIterator[MediaFile]:
+        """逐页遍历库内索引; 每页单独开会话, 调用方不持有整库 ORM 列表."""
+        after_id = 0
+        while True:
+            page = await self.list_media_files_page(
+                library_id=library_id, after_id=after_id, limit=page_size, statuses=statuses
+            )
+            if not page:
+                return
+            for media in page:
+                if media.id is not None:
+                    after_id = media.id
+                yield media
 
     async def count_media_files(
         self,
@@ -210,27 +233,37 @@ class MediaRepoMixin(RepositoryMixinBase):
         uncensored: bool | None = None,
         definition: str | None = None,
         content_type: ContentType | None = None,
+        ids: Sequence[int] | None = None,
     ) -> int:
+        id_list = list(ids) if ids is not None else None
+        if id_list is not None and not id_list:
+            return 0
+        id_chunks: Iterable[list[int] | None] = chunks(id_list) if id_list is not None else [None]
+        total = 0
         async with self._session() as session:
-            base = select(MediaFile)
-            if status is not None:
-                base = base.where(col(MediaFile.status).in_(status))
-            if library_id is not None:
-                base = base.where(col(MediaFile.library_id) == library_id)
-            if search:
-                pattern = f"%{search}%"
-                base = base.where(or_(col(MediaFile.path).ilike(pattern), col(MediaFile.number).ilike(pattern)))
-            base = _apply_media_phase_filters(
-                base,
-                has_subtitle=has_subtitle,
-                mosaic=mosaic,
-                uncensored=uncensored,
-                definition=definition,
-                content_type=content_type,
-            )
-            stmt = select(count()).select_from(base.subquery())
-            result = await session.exec(stmt)
-            return result.one() or 0
+            for id_chunk in id_chunks:
+                base = select(MediaFile)
+                if id_chunk is not None:
+                    base = base.where(col(MediaFile.id).in_(id_chunk))
+                if status is not None:
+                    base = base.where(col(MediaFile.status).in_(status))
+                if library_id is not None:
+                    base = base.where(col(MediaFile.library_id) == library_id)
+                if search:
+                    pattern = f"%{search}%"
+                    base = base.where(or_(col(MediaFile.path).ilike(pattern), col(MediaFile.number).ilike(pattern)))
+                base = _apply_media_phase_filters(
+                    base,
+                    has_subtitle=has_subtitle,
+                    mosaic=mosaic,
+                    uncensored=uncensored,
+                    definition=definition,
+                    content_type=content_type,
+                )
+                stmt = select(count()).select_from(base.subquery())
+                result = await session.exec(stmt)
+                total += result.one() or 0
+        return total
 
     async def update_media_file(self, media_id: int, **updates: Unpack[MediaFileUpdates]) -> MediaFile | None:
         async with self._session() as session:

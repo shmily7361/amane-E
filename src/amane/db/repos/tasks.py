@@ -20,6 +20,7 @@ _INSERT_CHUNK_SIZE = 100
 # 其余类型每次新建; 同库串行由 handler 内的锁保证.
 _EXCLUSIVE_FIELDS: dict[TaskType, str] = {
     TaskType.ACTOR_SCRAPE: "actor_id",
+    TaskType.ORGANIZE: "dedupe_key",
 }
 
 

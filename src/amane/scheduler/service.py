@@ -413,17 +413,8 @@ class WatcherService:
 
     async def _iter_library_media(self, library_id: int) -> AsyncIterator[MediaFile]:
         """按 id 游标分批遍历库内索引, 每批单独开会话并及时释放."""
-        after_id = 0
-        while True:
-            page = await self._repo.list_media_files_page(
-                library_id=library_id, after_id=after_id, limit=_WATCHER_SCAN_PAGE_SIZE
-            )
-            if not page:
-                return
-            for media in page:
-                if media.id is not None:
-                    after_id = media.id
-                yield media
+        async for media in self._repo.iter_media_files_page(library_id, page_size=_WATCHER_SCAN_PAGE_SIZE):
+            yield media
 
     async def _delete_under(self, library_id: int, root: Path) -> None:
         async with _DB_GATE:

@@ -6,6 +6,7 @@ from pydantic_ai import RunContext
 from pydantic_ai.capabilities import Capability
 
 from ..aggregate import compute_merge_updates
+from ..api.support.incremental_organize import enqueue_incremental_organize
 from ..db.models import TaskType
 from ..db.repo_types import MetadataFields, WriteMode
 from ..enums import MetadataField
@@ -54,6 +55,7 @@ def build_metadata_ops_capability() -> Capability[AgentDeps]:
         row = await ctx.deps.repo.update_metadata(metadata_id, mode=WriteMode.MANUAL, **cast(MetadataFields, patch))
         if row is None:
             return {"error": f"metadata {metadata_id} 不存在"}
+        await enqueue_incremental_organize(ctx.deps.repo, [metadata_id])
         return TOOL_OK
 
     @cap.tool
@@ -108,6 +110,7 @@ def build_metadata_ops_capability() -> Capability[AgentDeps]:
         if not updates:
             return {"error": "无有效合并项"}
         await ctx.deps.repo.update_metadata(metadata_id, mode=WriteMode.MANUAL, **cast(MetadataFields, updates))
+        await enqueue_incremental_organize(ctx.deps.repo, [metadata_id])
         return TOOL_OK
 
     @cap.tool
@@ -135,6 +138,7 @@ def build_metadata_ops_capability() -> Capability[AgentDeps]:
                 number=metadata.number,
                 content_type=content_type if content_type is not None else metadata.content_type,
                 use_cache=cache_kinds,
+                write_back=True,
             )
             await ctx.deps.repo.create_task(task_type=TaskType.SCRAPE, payload=payload)
             submitted += 1

@@ -14,7 +14,14 @@ from ..observability import current
 from ..observability.models import SiteOutcomeKind
 from ..plugins.models import SourceDescriptor, SourceTrait
 from ._common import ensure_oshash, finalize_media_file
-from .models import ActorScrapePayload, CacheKind, OrganizePayload, ScrapePayload, ScrapeResult
+from .models import (
+    ActorScrapePayload,
+    CacheKind,
+    OrganizePayload,
+    ScrapePayload,
+    ScrapeResult,
+    organize_dedupe_key,
+)
 from .protocol import FollowupTask, TaskHandler, TaskResult
 
 if TYPE_CHECKING:
@@ -272,6 +279,7 @@ class ScrapeHandler(TaskHandler[ScrapePayload, ScrapeResult]):
                 library_id=library_id,
                 media_file_ids=media_file_ids,
                 prune_empty_dirs=False,
+                dedupe_key=organize_dedupe_key(library_id, media_file_ids),
             )
             followups.append(
                 FollowupTask(

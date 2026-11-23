@@ -214,14 +214,15 @@ class DeleteHandler(TaskHandler[DeletePayload, DeleteResult]):
         if not targets:
             return 0
         keys = _path_keys(targets, root=None)
-        removed = 0
-        for media in await self._repo.list_media_files(library_id=library_id, limit=None):
-            if media.id is None:
-                continue
-            if _matches(media.path, exact=keys, subtrees=keys):
-                await self._repo.delete_media_file(media.id)
-                removed += 1
-        return removed
+        ids = [
+            media_id
+            async for media in self._repo.iter_media_files_page(library_id)
+            if (media_id := media.id) is not None and _matches(media.path, exact=keys, subtrees=keys)
+        ]
+        if not ids:
+            return 0
+        deleted, _ = await self._repo.batch_delete_media_files(ids)
+        return deleted
 
 
 def _path_keys(paths: Sequence[str | Path], *, root: Path | None) -> set[str]:

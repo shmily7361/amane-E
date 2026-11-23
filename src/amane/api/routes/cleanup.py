@@ -244,7 +244,7 @@ async def expand_cleanup_selection(
     outcome = await build_footprint(
         library=library,
         items=items,
-        indexed=await repo.list_media_files(library_id=library_id, limit=None),
+        indexed=[item async for item in repo.iter_media_files_page(library_id)],
         metas=metas,
         include_work_dir=req.include_work_dir,
     )

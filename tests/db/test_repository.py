@@ -455,6 +455,17 @@ class TestMediaFileRepo:
         count = await repo.count_media_files(status=status_filter, search=search)
         assert count == expected_count
 
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_iter_media_files_page_and_count_ids(self, repo: Repository):
+        created = [await repo.create_media_file(library_id=1, path=f"/video/PAGE-{i}.mp4") for i in range(5)]
+        ids = [m.id for m in created[:2] if m.id is not None]
+
+        paged = [m.path async for m in repo.iter_media_files_page(1, page_size=2)]
+        assert len(paged) == 5
+        assert len(set(paged)) == 5
+        assert await repo.count_media_files(library_id=1, ids=ids) == 2
+        assert await repo.count_media_files(library_id=1, ids=[]) == 0
+
 
 class TestMetadataRepo:
     @pytest.mark.asyncio(loop_scope="function")

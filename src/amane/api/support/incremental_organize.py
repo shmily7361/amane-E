@@ -11,7 +11,7 @@ import structlog
 
 from ...db.models import TaskType
 from ...db.repository import Repository
-from ...handlers.models import OrganizePayload
+from ...handlers.models import OrganizePayload, organize_dedupe_key
 
 logger = structlog.get_logger()
 
@@ -36,6 +36,7 @@ async def enqueue_incremental_organize(repo: Repository, metadata_ids: Sequence[
                 library_id=library_id,
                 media_file_ids=media_file_ids,
                 prune_empty_dirs=False,
+                dedupe_key=organize_dedupe_key(library_id, media_file_ids),
             )
             await payload.resolve(repo)
             task = await repo.create_task(TaskType.ORGANIZE, payload)

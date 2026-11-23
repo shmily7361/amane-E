@@ -516,6 +516,26 @@ class TestIncrementalWriteback:
         assert payload["prune_empty_dirs"] is False
 
     @pytest.mark.asyncio(loop_scope="function")
+    async def test_repeated_edit_reuses_queued_organize(self, client: AsyncClient, repo: Repository, stop_worker: None):
+        """同一组文件的连续编辑复用排队中的 ORGANIZE, 不刷任务列表."""
+        meta = await repo.upsert_metadata(number="WB-DEDUP")
+        assert meta.id is not None
+        media = await repo.create_media_file(
+            library_id=1,
+            path="/video/WB-DEDUP.mp4",
+            number="WB-DEDUP",
+            metadata_id=meta.id,
+        )
+        assert media.id is not None
+
+        assert (await client.patch(f"metadata/{meta.id}", json={"title": "A"})).status_code == 200
+        assert (await client.patch(f"metadata/{meta.id}", json={"title": "B"})).status_code == 200
+
+        tasks = await repo.list_tasks(task_types=[TaskType.ORGANIZE], limit=10)
+        assert len(tasks) == 1
+        assert tasks[0].payload["media_file_ids"] == [media.id]
+
+    @pytest.mark.asyncio(loop_scope="function")
     async def test_crop_poster_enqueues_organize_for_linked_files(
         self, client: AsyncClient, repo: Repository, app: FastAPI, stop_worker: None
     ) -> None:

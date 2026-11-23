@@ -1,3 +1,4 @@
+import os
 import shutil
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass, field
@@ -327,10 +328,25 @@ def _write_into_library(source: Path, target: Path) -> None:
     源在 data 目录, 那里通常只授予容器用户访问; 带上源的元数据会把这张 ACL 搬进媒体库,
     媒体服务器因此读不到产物. 临时文件加改名也让目标已存在时同样按新文件重写, 重跑整理
     即可修好旧产物.
+
+    内容与时间戳均未变时跳过复制: 全库改名整理不该把几十 GB 预告片再抄一遍. 复制后把源
+    mtime 写到目标, 只比对时间戳, 不对大文件做哈希.
     """
+    src_stat: os.stat_result | None = None
+    try:
+        src_stat = source.stat()
+        dst_stat = target.stat()
+        if src_stat.st_size == dst_stat.st_size and src_stat.st_mtime_ns == dst_stat.st_mtime_ns:
+            return
+    except OSError:
+        pass
+
     tmp = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
     try:
         shutil.copyfile(source, tmp)
+        # 只同步时间, 不同步 mode: 目标权限仍由媒体库目录决定.
+        if src_stat is not None:
+            os.utime(tmp, ns=(src_stat.st_atime_ns, src_stat.st_mtime_ns))
         tmp.replace(target)
     except OSError as exc:
         logger.error("library write failed", source=str(source), target=str(target), error=str(exc))
@@ -538,7 +554,15 @@ class OrganizeHandler(TaskHandler[OrganizePayload, OrganizeResult]):
             yield [mf for mf in page if not scoped or path_is_under(mf.path, payload.path)] if scoped else page
 
     async def _count_scope(self, payload: OrganizePayload, library: Library) -> int:
-        """只计数不读盘, 使进度条的分母与扫描范围一致."""
+        """只计数不水合整批 ORM, 使进度条分母与扫描范围一致.
+
+        全库与勾选快照走 SQL COUNT; 仅子目录范围仍复用游标遍历, 避免把路径前缀语义重写成 LIKE.
+        """
+        assert library.id is not None
+        if payload.media_file_ids is not None:
+            return await self._repo.count_media_files(library_id=library.id, ids=payload.media_file_ids)
+        if nfc_path(payload.path) == nfc_path(library.path):
+            return await self._repo.count_media_files(library_id=library.id)
         total = 0
         async for page in self._iter_scope(payload, library):
             total += len(page)
