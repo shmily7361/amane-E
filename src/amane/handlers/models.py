@@ -185,6 +185,11 @@ class OrganizePayload(LibraryBase):
                 raise HTTPException(status_code=422, detail="media_file_ids 含其它库的文件")
         await super().resolve(repo)
 
+    def apply_library_defaults(self, lib: Library) -> None:
+        """内部入队路径使用: 只补库默认值, 不抛 HTTP 适配层异常."""
+        self.path = self.path or lib.path
+        self._apply_library(lib)
+
     def _apply_library(self, lib: Library) -> None:
         if self.write_nfo is None:
             self.write_nfo = lib.write_nfo

@@ -53,6 +53,16 @@ async def write_deps(tmp_path: Path, repo: Repository) -> AgentDeps:
     )
 
 
+def test_metadata_ops_uses_domain_enqueue_without_api_cycle() -> None:
+    """agent 与 api.app 可同时导入; 入队函数来自 handlers 领域层而非 api.support."""
+    import importlib
+
+    import amane.agent.metadata_ops as metadata_ops
+
+    importlib.import_module("amane.api.app")
+    assert metadata_ops.enqueue_incremental_organize.__module__ == "amane.handlers.enqueue"
+
+
 def test_build_agent_wires_explore_and_metadata_ops() -> None:
     agent = build_agent(AgentConfig(api_key="sk-test", model="gpt-4o", base_url="https://example.com/v1"))
     assert agent is not None

@@ -11,6 +11,7 @@ from structlog.contextvars import bound_contextvars
 
 from ..db import RoutineType, TaskType
 from ..handlers import CleanupPayload, R18ImportPayload, RescrapePayload, SemanticIndexPayload, UpscalePayload
+from ..handlers.enqueue import retry_pending_writebacks
 
 if TYPE_CHECKING:
     from ..db.repository import Repository
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 _CHECK_INTERVAL = 60.0
+_SHUTDOWN_TICK_TIMEOUT = 10.0
 
 
 class CronScheduler:
@@ -25,6 +27,10 @@ class CronScheduler:
         self._repo = repo
         self._running = False
         self._stop_signal = asyncio.Event()
+        # 关停时先等当前 tick 收尾; 否则取消正在进行的 DB 写事务会留下 SQLite 写锁,
+        # 紧接着的 stop_workers / 标记 RUNNING 任务失败会报 database is locked.
+        self._tick_done = asyncio.Event()
+        self._tick_done.set()
 
     @property
     def is_running(self) -> bool:
@@ -46,36 +52,47 @@ class CronScheduler:
 
     async def stop(self) -> None:
         self._running = False
+        # 不在 _tick 持写锁时取消任务: 等它提交或超时后再发停止信号.
+        with suppress(TimeoutError):
+            await asyncio.wait_for(self._tick_done.wait(), _SHUTDOWN_TICK_TIMEOUT)
         self._stop_signal.set()
         logger.info("cron scheduler stopping")
 
     async def _tick(self) -> None:
-        now = datetime.now(UTC)
-        schedules = await self._repo.list_schedules()
+        self._tick_done.clear()
+        try:
+            # 与用户 Schedule 正交: 入队失败登记的增量写盘每分钟自愈, 不需要用户新建定时任务.
+            await retry_pending_writebacks(self._repo)
+            now = datetime.now(UTC)
+            schedules = await self._repo.list_schedules()
 
-        for schedule in schedules:
-            if not schedule.enabled:
-                continue
-            if schedule.id is None:
-                continue
+            for schedule in schedules:
+                if not schedule.enabled:
+                    continue
+                if schedule.id is None:
+                    continue
 
-            if schedule.next_run is None:
-                # 尚无 next_run: 只写入下次触发时间
-                next_run = croniter(schedule.cron, now).get_next(datetime)
-                await self._repo.update_schedule(schedule.id, next_run=next_run)
-            else:
-                # 无时区则按 UTC
-                next_run = schedule.next_run if schedule.next_run.tzinfo else schedule.next_run.replace(tzinfo=UTC)
+                if schedule.next_run is None:
+                    # 尚无 next_run: 只写入下次触发时间
+                    next_run = croniter(schedule.cron, now).get_next(datetime)
+                    await self._repo.update_schedule(schedule.id, next_run=next_run)
+                else:
+                    # 无时区则按 UTC
+                    next_run = schedule.next_run if schedule.next_run.tzinfo else schedule.next_run.replace(tzinfo=UTC)
 
-            if next_run > now:
-                continue
+                if next_run > now:
+                    continue
 
-            with bound_contextvars(schedule_id=schedule.id, schedule_name=schedule.name, task_type=schedule.task_type):
-                logger.info("schedule triggered", payload=schedule.payload)
-                await self._execute_task(schedule.id, schedule.task_type, schedule.payload)
+                with bound_contextvars(
+                    schedule_id=schedule.id, schedule_name=schedule.name, task_type=schedule.task_type
+                ):
+                    logger.info("schedule triggered", payload=schedule.payload)
+                    await self._execute_task(schedule.id, schedule.task_type, schedule.payload)
 
-            new_next_run = croniter(schedule.cron, now).get_next(datetime)
-            await self._repo.update_schedule(schedule.id, last_run=now, next_run=new_next_run)
+                new_next_run = croniter(schedule.cron, now).get_next(datetime)
+                await self._repo.update_schedule(schedule.id, last_run=now, next_run=new_next_run)
+        finally:
+            self._tick_done.set()
 
     async def _execute_task(self, schedule_id: int, task_type: RoutineType, payload: dict) -> None:
         match task_type:

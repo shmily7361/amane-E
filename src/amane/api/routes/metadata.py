@@ -11,6 +11,7 @@ from ...db.models import Metadata, MetadataSortField, SavedQueryEntity, SortOrde
 from ...db.repo_types import WriteMode
 from ...db.repos.media import file_phase_of
 from ...handlers import ScrapePayload
+from ...handlers.enqueue import enqueue_incremental_organize
 from ...media import manual_crop_image
 from ...parsing import FilePhaseSummary as ParsedFilePhase
 from ...parsing import summarize_file_phases
@@ -41,7 +42,6 @@ from ..models import (
     UserTagResponse,
     to_media_file_response,
 )
-from ..support.incremental_organize import enqueue_incremental_organize
 from ..support.metadata_filters import MetadataFilters, parse_metadata_filters, require_known_definition
 from .saved_queries import resolve_saved_query_id_subquery
 

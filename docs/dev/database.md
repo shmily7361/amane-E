@@ -34,7 +34,7 @@ r18 库由项目导入 / 管理但 schema 不受我们控制, **不能纳入 Ale
 
 主库连接池按 worker 并发与 API 余量配置: `AMANE_DB_POOL_SIZE` (默认 24), `AMANE_DB_MAX_OVERFLOW` (默认 30), `AMANE_DB_POOL_TIMEOUT` (默认 60 秒). `pool_timeout` 须大于 `busy_timeout`, 使等待写锁时不至于先耗尽连接池. 大库扫描普遍走 id 游标分页而非 `OFFSET` 深翻页: REFRESH / DELETE / 清理清单展开 / watcher 目录事件用 `MediaRepoMixin.iter_media_files_page`; ORGANIZE 的整库路径仍用 `list_media_files_page` 加子目录过滤, 勾选快照走有界的 ids 查询. `get_invalid` 仍保留 `limit=None` (当前无调用者). ORGANIZE 的进度分母用 SQL `COUNT(*)`, 不为了计数再扫一遍游标. 大批量索引删除可传 `commit_per_chunk=True` 分批提交, 避免单个长事务占住 SQLite 写锁. watcher 事件另由两级信号量限流 (见 [watcher.md](watcher.md)), 避免事件风暴瞬时抽干连接池.
 
-任务入队在 SQLite 写锁内判定互斥并分配 id; 创建与重试先执行 `BEGIN IMMEDIATE`, 后继复用父完成 UPDATE 的事务. 进程内仍按 Repository 串行化, 见 [task-system.md](task-system.md).
+任务入队在 SQLite 写锁内判定互斥并分配 id; 创建与重试先执行 `BEGIN IMMEDIATE`, 后继复用父完成 UPDATE 的事务. 进程内仍按 Repository 串行化, 见 [task-system.md](task-system.md). `tasks(type, status)` 复合索引让互斥键查询只扫描同类型、同状态的活跃行; `pending_writebacks` 是增量落盘入队失败的待补偿表, `metadata_id` 主键 + `created_at` 索引供 cron 按 FIFO 重投, metadata 删除时级联清理. 它不进入 `Metadata` API 契约.
 
 ## 启动期自动迁移与安全网
 

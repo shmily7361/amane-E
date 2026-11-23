@@ -6,10 +6,10 @@ from pydantic_ai import RunContext
 from pydantic_ai.capabilities import Capability
 
 from ..aggregate import compute_merge_updates
-from ..api.support.incremental_organize import enqueue_incremental_organize
 from ..db.models import TaskType
 from ..db.repo_types import MetadataFields, WriteMode
 from ..enums import MetadataField
+from ..handlers.enqueue import enqueue_incremental_organize
 from ..handlers.models import CacheKind, ScrapePayload
 from ..parsing import ContentType
 from .tools import TOOL_OK, AgentDeps, require_approval, unknown_field_error

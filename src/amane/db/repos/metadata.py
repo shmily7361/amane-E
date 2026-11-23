@@ -23,6 +23,7 @@ from ..models import (
     MetadataSortField,
     MetadataTag,
     MetadataUserTag,
+    PendingWriteback,
     Publisher,
     Series,
     SortOrder,
@@ -647,6 +648,48 @@ class MetadataRepoMixin(RepositoryMixinBase):
             await session.commit()
         await self._drop_embeddings(removed)
         return len(removed), missing
+
+    async def mark_metadata_pending_writeback(self, metadata_ids: Sequence[int]) -> None:
+        """登记增量写盘入队失败的条目; 已存在时保留首次失败时间, 供 cron 按 FIFO 重试."""
+        ids = unique_ids(metadata_ids)
+        if not ids:
+            return
+        now = _utcnow()
+        async with self._session() as session:
+            await acquire_write_lock(session)
+            for chunk in chunks(ids):
+                existing = set(
+                    (
+                        await session.exec(
+                            select(PendingWriteback.metadata_id).where(col(PendingWriteback.metadata_id).in_(chunk))
+                        )
+                    ).all()
+                )
+                for metadata_id in chunk:
+                    if metadata_id not in existing:
+                        session.add(PendingWriteback(metadata_id=metadata_id, created_at=now))
+            await session.commit()
+
+    async def clear_metadata_pending_writeback(self, metadata_ids: Sequence[int]) -> None:
+        """重试入队成功后清除待补偿条目."""
+        ids = unique_ids(metadata_ids)
+        if not ids:
+            return
+        async with self._session() as session:
+            await acquire_write_lock(session)
+            for chunk in chunks(ids):
+                await session.exec(sqla_delete(PendingWriteback).where(col(PendingWriteback.metadata_id).in_(chunk)))
+            await session.commit()
+
+    async def list_pending_writeback_metadata_ids(self, *, limit: int = 100) -> list[int]:
+        """按首次失败时间返回待重试的 metadata id."""
+        async with self._session() as session:
+            stmt = (
+                select(PendingWriteback.metadata_id)
+                .order_by(col(PendingWriteback.created_at).asc(), col(PendingWriteback.metadata_id).asc())
+                .limit(limit)
+            )
+            return list((await session.exec(stmt)).all())
 
     async def _drop_embeddings(self, metadata_ids: list[int]) -> None:
         """主库提交之后清除 sidecar: 跨库没有事务, 先删除向量会在主库回滚时丢弃仍有效的数据.

@@ -322,6 +322,19 @@ class Metadata(SQLModel, table=True):
         return is_vr(self.tags or [])
 
 
+class PendingWriteback(SQLModel, table=True):
+    """增量 ORGANIZE 入队失败的待补偿条目; 不暴露给 API 的 Metadata 契约.
+
+    独立表避免给 Metadata 加内部列后污染 ``PartialMetadata`` / OpenAPI. metadata 删除时级联清理.
+    """
+
+    __tablename__ = "pending_writebacks"  # type: ignore[assignment]
+    __table_args__ = (Index("ix_pending_writebacks_created_at", "created_at"),)
+
+    metadata_id: int = Field(foreign_key="metadata.id", primary_key=True, ondelete="CASCADE")
+    created_at: datetime = Field(default_factory=_utcnow)
+
+
 def metadata_vr_predicate() -> ColumnElement[bool]:
     """`Metadata.vr` 的 SQL 等价式: 标签整体命中 `parsing.VR_TAGS` (忽略大小写与首尾空白).
 
@@ -342,6 +355,10 @@ def metadata_number_predicate(number: str) -> ColumnElement[bool]:
 
 class Task(SQLModel, table=True):
     __tablename__ = "tasks"  # type: ignore[assignment]
+    __table_args__ = (
+        # _active_exclusive_ids 按 (type, status) 过滤活跃任务; 单列索引会让另一种条件退化成逐行过滤.
+        Index("ix_tasks_type_status", "type", "status"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     type: TaskType = Field(index=True)

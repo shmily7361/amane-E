@@ -224,8 +224,15 @@ class RefreshSubmission(RefreshPayload):
 
 class OrganizeSubmission(OrganizePayload):
     type: Literal["organize"]
-    # dedupe_key 是服务端内部去重字段, 不进入公开提交契约; 客户端传值直接 422.
-    dedupe_key: None = Field(default=None, description="内部字段; 由服务端生成, 客户端不可设置")
+
+    # 不收窄继承字段类型 (int | None), 否则 ty 会报 mutable override; 用校验器拒绝客户端传值.
+    @field_validator("dedupe_key", mode="before")
+    @classmethod
+    def _reject_client_dedupe_key(cls, value: object) -> None:
+        """dedupe_key 是服务端内部去重字段; 客户端传任意非 None 值直接 422."""
+        if value is not None:
+            raise ValueError("dedupe_key 由服务端生成, 客户端不可设置")
+        return
 
 
 class ScanInvalidSubmission(ScanInvalidPayload):
