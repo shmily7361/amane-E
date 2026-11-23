@@ -221,7 +221,7 @@ class DeleteHandler(TaskHandler[DeletePayload, DeleteResult]):
         ]
         if not ids:
             return 0
-        deleted, _ = await self._repo.batch_delete_media_files(ids)
+        deleted, _ = await self._repo.batch_delete_media_files(ids, commit_per_chunk=True)
         return deleted
 
 

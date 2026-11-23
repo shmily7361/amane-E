@@ -464,7 +464,50 @@ class TestMediaFileRepo:
         assert len(paged) == 5
         assert len(set(paged)) == 5
         assert await repo.count_media_files(library_id=1, ids=ids) == 2
+        assert await repo.count_media_files(library_id=1, ids=[*ids, ids[0]]) == 2
+        assert len(await repo.list_media_files(ids=[*ids, ids[0]], limit=None)) == 2
         assert await repo.count_media_files(library_id=1, ids=[]) == 0
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_iter_media_files_page_materializes_generator_statuses(self, repo: Repository) -> None:
+        """statuses 传生成器时不能只处理第一页 (生成器第一页后被消费光)."""
+        for i in range(3):
+            media = await repo.create_media_file(library_id=1, path=f"/video/ST-{i}.mp4")
+            assert media.id is not None
+            await repo.update_media_file(media.id, status=MediaFileStatus.SCRAPED)
+
+        matched = [
+            media.path
+            async for media in repo.iter_media_files_page(
+                1, statuses=(s for s in [MediaFileStatus.SCRAPED]), page_size=1
+            )
+        ]
+        assert len(matched) == 3
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_batch_delete_commit_per_chunk(self, repo: Repository, monkeypatch: pytest.MonkeyPatch) -> None:
+        """大批量删索引按批提交, 不让一个长事务占住 SQLite 写锁."""
+        from amane.db.repos import base as repos_base
+
+        monkeypatch.setattr(repos_base, "SQL_IN_CHUNK_SIZE", 2)
+        created = [await repo.create_media_file(library_id=1, path=f"/video/DEL-{i}.mp4") for i in range(5)]
+        ids = [m.id for m in created if m.id is not None]
+        assert len(ids) == 5
+
+        from sqlmodel.ext.asyncio.session import AsyncSession
+
+        original_commit = AsyncSession.commit
+        commit_count = 0
+
+        async def _counted_commit(self: AsyncSession) -> None:
+            nonlocal commit_count
+            commit_count += 1
+            await original_commit(self)
+
+        monkeypatch.setattr(AsyncSession, "commit", _counted_commit)
+        deleted, missing = await repo.batch_delete_media_files(ids, commit_per_chunk=True)
+        assert (deleted, missing) == (5, 0)
+        assert commit_count >= 2  # 5 条按 2 分批, 至少提交两次
 
 
 class TestMetadataRepo:

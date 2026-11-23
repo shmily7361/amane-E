@@ -125,7 +125,7 @@ class RefreshHandler(TaskHandler[RefreshPayload, RefreshResult]):
                 if missing:
                     ids = [media.id for media in missing if media.id is not None]
                     logger.info("remove invalid db entries", count=len(ids))
-                    deleted, _ = await self._repo.batch_delete_media_files(ids)
+                    deleted, _ = await self._repo.batch_delete_media_files(ids, commit_per_chunk=True)
                     removed += deleted
 
         scrape_statuses = payload.scrape

@@ -224,6 +224,8 @@ class RefreshSubmission(RefreshPayload):
 
 class OrganizeSubmission(OrganizePayload):
     type: Literal["organize"]
+    # dedupe_key 是服务端内部去重字段, 不进入公开提交契约; 客户端传值直接 422.
+    dedupe_key: None = Field(default=None, description="内部字段; 由服务端生成, 客户端不可设置")
 
 
 class ScanInvalidSubmission(ScanInvalidPayload):

@@ -135,7 +135,7 @@ class MediaRepoMixin(RepositoryMixinBase):
         content_type: ContentType | None = None,
     ) -> list[MediaFile]:
         """limit None 不分页, ids 分批 IN; 分页时不分批 (offset 与 limit 会按批重新计算). ids 为空列表时直接返回空."""
-        id_list = list(ids) if ids is not None else None
+        id_list = unique_ids(ids) if ids is not None else None
         if id_list is not None and not id_list:
             return []
         async with self._session() as session:
@@ -210,10 +210,12 @@ class MediaRepoMixin(RepositoryMixinBase):
         page_size: int = 500,
     ) -> AsyncIterator[MediaFile]:
         """逐页遍历库内索引; 每页单独开会话, 调用方不持有整库 ORM 列表."""
+        # statuses 可能是生成器: 只物化一次, 否则第一页之后 IN () 恒假, 会静默漏掉后续页.
+        status_tuple = tuple(statuses) if statuses is not None else None
         after_id = 0
         while True:
             page = await self.list_media_files_page(
-                library_id=library_id, after_id=after_id, limit=page_size, statuses=statuses
+                library_id=library_id, after_id=after_id, limit=page_size, statuses=status_tuple
             )
             if not page:
                 return
@@ -235,7 +237,7 @@ class MediaRepoMixin(RepositoryMixinBase):
         content_type: ContentType | None = None,
         ids: Sequence[int] | None = None,
     ) -> int:
-        id_list = list(ids) if ids is not None else None
+        id_list = unique_ids(ids) if ids is not None else None
         if id_list is not None and not id_list:
             return 0
         id_chunks: Iterable[list[int] | None] = chunks(id_list) if id_list is not None else [None]
@@ -305,8 +307,14 @@ class MediaRepoMixin(RepositoryMixinBase):
             await session.commit()
             return True
 
-    async def batch_delete_media_files(self, media_ids: Sequence[int]) -> tuple[int, int]:
-        """按 id 批量删除记录, 返回 ``(删除数, 不存在的 id 数)``; 整个批次只提交一次."""
+    async def batch_delete_media_files(
+        self, media_ids: Sequence[int], *, commit_per_chunk: bool = False
+    ) -> tuple[int, int]:
+        """按 id 批量删除记录, 返回 ``(删除数, 不存在的 id 数)``.
+
+        默认整批一次提交, 供必须原子删除的调用方使用. ``commit_per_chunk=True`` 每批提交,
+        适合大目录删除: 避免一个长事务把 SQLite 单写者锁住几十秒, 拖到别的任务 busy_timeout.
+        """
         ids = unique_ids(media_ids)
         if not ids:
             return 0, 0
@@ -315,7 +323,10 @@ class MediaRepoMixin(RepositoryMixinBase):
             for chunk in chunks(ids):
                 result = await session.exec(sqla_delete(MediaFile).where(col(MediaFile.id).in_(chunk)))
                 deleted += result.rowcount or 0
-            await session.commit()
+                if commit_per_chunk:
+                    await session.commit()
+            if not commit_per_chunk:
+                await session.commit()
         return deleted, len(ids) - deleted
 
     async def count_media_by_metadata_ids(self, metadata_ids: Sequence[int]) -> dict[int, int]:

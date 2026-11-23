@@ -62,6 +62,8 @@ async def resolve_submission(req: TaskSubmission, repo: Repository) -> tuple[Tas
             return TaskType.REFRESH, req
         case OrganizeSubmission():
             await req.resolve(repo)
+            # 双重保险: 即便将来提交模型放宽, 也只信服务端生成的去重键.
+            req.dedupe_key = None
             return TaskType.ORGANIZE, req
         case DeleteSubmission():
             return TaskType.DELETE, req

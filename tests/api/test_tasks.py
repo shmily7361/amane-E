@@ -71,6 +71,9 @@ class TestSubmitTask:
         assert set(org.json()["payload"]["copy_resources"]) == {"thumb", "poster", "extrafanart", "trailer"}
         assert "recursive" not in org.json()["payload"]
         assert "patterns" not in org.json()["payload"]
+        assert (
+            await client.post("tasks", json={"type": "organize", "library_id": lib.id, "dedupe_key": 123})
+        ).status_code == 422
 
         lib2 = await repo.create_library(name="o", path=str(safe_path / "o"), write_nfo=True)
         (safe_path / "o").mkdir()
