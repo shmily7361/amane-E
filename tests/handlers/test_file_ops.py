@@ -64,6 +64,22 @@ def test_library_write_skips_unchanged_attachment(tmp_path: Path) -> None:
     assert dst.read_bytes() == b"sentinelxx"
 
 
+def test_library_write_survives_utime_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SMB/FAT 拒绝设时间戳时仍要把附件落盘, 不能让 ORGANIZE 整体失败."""
+    src = tmp_path / "resources" / "poster.jpg"
+    dst = tmp_path / "lib" / "poster.jpg"
+    src.parent.mkdir(parents=True)
+    dst.parent.mkdir(parents=True)
+    src.write_bytes(b"poster-bytes")
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError(22, "Invalid argument")
+
+    monkeypatch.setattr("amane.handlers.file.os.utime", _boom)
+    _write_into_library(src, dst)
+    assert dst.read_bytes() == b"poster-bytes"
+
+
 def _paths(base: Path) -> ResolvedPaths:
     return ResolvedPaths(
         video=base / "MIDV-123" / "MIDV-123.mp4",

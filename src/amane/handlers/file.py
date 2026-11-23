@@ -1,6 +1,7 @@
 import os
 import shutil
 from collections.abc import AsyncGenerator, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -326,11 +327,13 @@ def _write_into_library(source: Path, target: Path) -> None:
     """按新文件落盘库内产物: 模式位与 ACL 由目标目录决定, 不继承源文件.
 
     源在 data 目录, 那里通常只授予容器用户访问; 带上源的元数据会把这张 ACL 搬进媒体库,
-    媒体服务器因此读不到产物. 临时文件加改名也让目标已存在时同样按新文件重写, 重跑整理
-    即可修好旧产物.
+    媒体服务器因此读不到产物. 临时文件加改名保证目标已存在时按新文件原子替换;     源内容或
+    纳秒级 mtime 变化时会重写, 因此重跑整理仍能修好旧产物. 只有「大小与纳秒时间都恰好
+    相同但内容被改坏」这种外部篡改会被短路跳过.
 
-    内容与时间戳均未变时跳过复制: 全库改名整理不该把几十 GB 预告片再抄一遍. 复制后把源
-    mtime 写到目标, 只比对时间戳, 不对大文件做哈希.
+    时间戳同步是尽力而为: SMB/CIFS / FAT / 部分 FUSE 挂载可能拒绝设置纳秒时间, 失败时
+    退回"每次都写", 不能因此丢掉产物或让整个 ORGANIZE 任务失败. 网络盘时间精度不足时
+    短路优化同样失效, 但正确性不受影响. 不对大文件做内容哈希.
     """
     src_stat: os.stat_result | None = None
     try:
@@ -343,19 +346,25 @@ def _write_into_library(source: Path, target: Path) -> None:
 
     tmp = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
     try:
-        shutil.copyfile(source, tmp)
+        try:
+            shutil.copyfile(source, tmp)
+        except OSError as exc:
+            logger.error("library write failed", source=str(source), target=str(target), error=str(exc))
+            raise
         # 只同步时间, 不同步 mode: 目标权限仍由媒体库目录决定.
         if src_stat is not None:
-            os.utime(tmp, ns=(src_stat.st_atime_ns, src_stat.st_mtime_ns))
-        tmp.replace(target)
-    except OSError as exc:
-        logger.error("library write failed", source=str(source), target=str(target), error=str(exc))
-        raise
-    finally:
+            try:
+                os.utime(tmp, ns=(src_stat.st_atime_ns, src_stat.st_mtime_ns))
+            except OSError as exc:
+                logger.debug("library mtime sync skipped", path=str(target), error=str(exc))
         try:
-            tmp.unlink(missing_ok=True)
+            tmp.replace(target)
         except OSError as exc:
-            logger.debug("temp file cleanup skipped", path=str(tmp), error=str(exc))
+            logger.error("library write failed", source=str(source), target=str(target), error=str(exc))
+            raise
+    finally:
+        with suppress(OSError):
+            tmp.unlink(missing_ok=True)
 
 
 @in_thread
@@ -372,8 +381,8 @@ def _place_library_images(
     content_type: ContentType,
     watermark_dir: Path | None,
 ) -> None:
-    # 复制封面 / 海报 / 预告片 / extrafanart 到库路径, 不判断目标上是否已有产物.
-    # fanart 没有刮削来源, 内容取 thumb, 随 thumb 一同重写.
+    # 复制封面 / 海报 / 预告片 / extrafanart 到库路径; 大小与纳秒级 mtime 都未变时跳过,
+    # 避免全库改名整理重抄大体积预告片. fanart 没有刮削来源, 内容取 thumb.
     if thumb_local is not None and DownloadableResource.thumb in kinds:
         paths.thumb.parent.mkdir(parents=True, exist_ok=True)
         _write_into_library(thumb_local, paths.thumb)
