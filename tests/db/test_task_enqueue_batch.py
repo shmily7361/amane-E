@@ -187,6 +187,53 @@ async def test_create_tasks_reuses_existing_active_rows(repo: Repository) -> Non
 
 
 @pytest.mark.asyncio(loop_scope="function")
+async def test_running_organize_does_not_reuse_dedupe_key(repo: Repository) -> None:
+    """ORGANIZE 逐文件读元数据; 复用 RUNNING 任务会吞掉任务开始后提交的编辑."""
+    payload = {"dedupe_key": 4242, "library_id": 1, "media_file_ids": [1]}
+    first = await repo.create_task(TaskType.ORGANIZE, payload)
+    second = await repo.create_task(TaskType.ORGANIZE, payload)
+    assert first.id is not None and second.id == first.id  # 排队中仍合并
+
+    claimed = await repo.claim_next_task()
+    assert claimed is not None and claimed.id == first.id
+    assert claimed.status is TaskStatus.RUNNING
+
+    third = await repo.create_task(TaskType.ORGANIZE, payload)
+    assert third.id is not None and third.id != first.id  # 运行中必须另起一条
+    assert third.status is TaskStatus.QUEUED
+    assert await repo.count_tasks(task_types=[TaskType.ORGANIZE]) == 2
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_followup_does_not_borrow_organize_from_other_chain(repo: Repository) -> None:
+    """后继不能摘走另一条链里的排队 ORGANIZE, 否则整理会早于本次刮削完成."""
+    payload = {"dedupe_key": 777, "library_id": 1, "media_file_ids": [1]}
+
+    parent_a = await repo.create_task(TaskType.REFRESH, {"library_id": 1})
+    parent_b = await repo.create_task(TaskType.SCRAPE, {"number": "X-1"})
+    assert parent_a.id is not None and parent_b.id is not None
+    claimed_a = await repo.claim_next_task()
+    claimed_b = await repo.claim_next_task()
+    assert claimed_a is not None and claimed_a.id == parent_a.id
+    assert claimed_b is not None and claimed_b.id == parent_b.id
+
+    children_a = await repo.complete_task_with_followups(
+        parent_a.id, result={}, followups=[("organize", TaskType.ORGANIZE, payload, 0)]
+    )
+    assert len(children_a) == 1 and children_a[0].id is not None
+
+    children_b = await repo.complete_task_with_followups(
+        parent_b.id, result={}, followups=[("organize", TaskType.ORGANIZE, payload, 0)]
+    )
+    assert len(children_b) == 1 and children_b[0].id is not None
+    assert children_b[0].id != children_a[0].id
+    assert children_b[0].root_task_id == parent_b.id
+
+    child_links = await repo.list_task_links(child_task_id=children_b[0].id)
+    assert [link.parent_task_id for link in child_links] == [parent_b.id]
+
+
+@pytest.mark.asyncio(loop_scope="function")
 async def test_followups_reuse_active_rows_and_link_them(repo: Repository) -> None:
     """后继命中活跃行时直接建边, 不另建行; 批内同键复用同一行; 裸行被收进本次链."""
     parent = await repo.create_task(TaskType.REFRESH, {"library_id": 1})

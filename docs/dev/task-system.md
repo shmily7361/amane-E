@@ -209,4 +209,4 @@ Watcher 仍不自动 ORGANIZE / DELETE: 三档 `automation` 都不提交整理, 
 - **读取**: 整理结果只在任务列表与任务结果里读. 整理是对文件集合的操作, 不是库的属性, 多次整理之间不构成先后关系, 因此库响应不设整理摘要.
 - **附件复制**: 库内图片/预告片按 size + mtime 短路, 内容与时间均未变时跳过复制; 全库改名整理不会重抄几十 GB 预告片. 带水印图片因水印会改动目标 mtime, 仍按新内容重写.
 
-元数据编辑 (PATCH / 裁剪海报 / 字段合并 / 条目合并 / Agent 的 update_metadata 与 merge_metadata) 成功后经 `api/support/incremental_organize.py` 按 `metadata_ids` 反查关联文件, 按库分组入队 ORGANIZE, 范围只含这些文件且 `prune_empty_dirs=False`. payload 带基于「库 + 文件 id 集合」的 `dedupe_key`; 同键已有 queued/running 任务时复用, 连续编辑不会排队多个 ORGANIZE. 手动提交不带该键, 仍可强制重跑. 入队失败只记告警, 不改变编辑请求的结果; NFO 与图片已就位时只重写附属文件, 不移动视频. 批量重刮走任务链而不是直接入队: 刮削完成后才按同样范围写回, 避免用旧元数据落盘.
+元数据编辑 (PATCH / 裁剪海报 / 字段合并 / 条目合并 / Agent 的 update_metadata 与 merge_metadata) 成功后经 `api/support/incremental_organize.py` 按 `metadata_ids` 反查关联文件, 按库分组入队 ORGANIZE, 范围只含这些文件且 `prune_empty_dirs=False`. payload 带基于「库 + 文件 id 集合」的 `dedupe_key`; 同键已有 **queued** 任务时复用, 连续编辑不会排队多个 ORGANIZE. 若同键任务已 RUNNING, 因为 ORGANIZE 逐文件读元数据、已处理过的文件不会重读, 必须另起一条排队任务, 否则任务开始后的编辑会被吞. 手动提交不带该键, 仍可强制重跑. 后继场景不会摘走另一条链里的排队任务, 以保持「整理在父刮削完成后」的次序. 入队失败只记告警, 不改变编辑请求的结果; NFO 与图片已就位时只重写附属文件, 不移动视频. 批量重刮走任务链而不是直接入队: 刮削完成后才按同样范围写回, 避免用旧元数据落盘.

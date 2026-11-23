@@ -16,11 +16,17 @@ from .base import RepositoryMixinBase, chunks
 _ACTIVE_STATUSES = (TaskStatus.QUEUED, TaskStatus.RUNNING)
 # 单条 INSERT 的行数: 每行至多 8 个绑定变量, 100 行合 800, 仍在 SQLite 旧默认的 999 变量上限内.
 _INSERT_CHUNK_SIZE = 100
-# 互斥键在 payload 里; 同键已有 queued/running 则复用, 不另建行.
+# 互斥键在 payload 里; 同键命中下列状态则复用, 不另建行.
 # 其余类型每次新建; 同库串行由 handler 内的锁保证.
 _EXCLUSIVE_FIELDS: dict[TaskType, str] = {
     TaskType.ACTOR_SCRAPE: "actor_id",
     TaskType.ORGANIZE: "dedupe_key",
+}
+# ACTOR_SCRAPE 复用运行中的任务没有副作用 (执行时会重读来源). ORGANIZE 逐文件读元数据,
+# 复用已 RUNNING 的任务会让任务开始后才提交的编辑静默丢失, 因此只与尚未启动的 QUEUED 合并.
+_EXCLUSIVE_STATUSES: dict[TaskType, tuple[TaskStatus, ...]] = {
+    TaskType.ACTOR_SCRAPE: _ACTIVE_STATUSES,
+    TaskType.ORGANIZE: (TaskStatus.QUEUED,),
 }
 
 
@@ -60,8 +66,13 @@ class _PendingTask(NamedTuple):
     root_task_id: int | None = None
 
 
-async def _active_exclusive_ids(session: AsyncSession, task_type: TaskType, field: str) -> dict[int, int]:
-    """一次查出该类型全部活跃行的互斥键 → 行 id, 供整批判重.
+async def _active_exclusive_ids(
+    session: AsyncSession,
+    task_type: TaskType,
+    field: str,
+    statuses: Sequence[TaskStatus],
+) -> dict[int, int]:
+    """一次查出该类型指定状态的互斥键 → 行 id, 供整批判重.
 
     只认 JSON 整数: ``true`` / ``1.0`` / 字符串与 ``_exclusive_value`` 的口径一致, 都不参与互斥.
     逐条 payload 各查一次时, 每条都要读出全部活跃行再在 Python 里比较, 后继一多就是平方级.
@@ -70,7 +81,7 @@ async def _active_exclusive_ids(session: AsyncSession, task_type: TaskType, fiel
     extracted = func.json_extract(col(Task.payload), path)
     stmt = select(extracted, col(Task.id)).where(
         col(Task.type) == task_type,
-        col(Task.status).in_(_ACTIVE_STATUSES),
+        col(Task.status).in_(statuses),
         func.json_type(col(Task.payload), path) == "integer",
     )
     out: dict[int, int] = {}
@@ -93,7 +104,8 @@ async def _insert_tasks(session: AsyncSession, pending: Sequence[_PendingTask]) 
     for task_type in dict.fromkeys(row.task_type for row in pending):
         field = _EXCLUSIVE_FIELDS.get(task_type)
         if field is not None:
-            active[task_type] = await _active_exclusive_ids(session, task_type, field)
+            statuses = _EXCLUSIVE_STATUSES.get(task_type, _ACTIVE_STATUSES)
+            active[task_type] = await _active_exclusive_ids(session, task_type, field, statuses)
 
     values: list[int | None] = []
     for row in pending:
@@ -123,6 +135,15 @@ async def _insert_tasks(session: AsyncSession, pending: Sequence[_PendingTask]) 
             key = (row.task_type, value)
             existing_id = active[row.task_type].get(value)
             existing = reused.get(existing_id) if existing_id is not None else None
+            # 后继 (root_task_id 非空) 不能摘走另一条任务链里的排队任务: 那会让整理早于刮削完成,
+            # 并把同一节点挂进两条链. 裸任务或同链任务仍可复用.
+            if (
+                existing is not None
+                and row.task_type is TaskType.ORGANIZE
+                and row.root_task_id is not None
+                and existing.root_task_id not in (None, row.root_task_id)
+            ):
+                existing = None
             if existing is not None:
                 if row.root_task_id is not None and existing.root_task_id is None:
                     existing.root_task_id = row.root_task_id
