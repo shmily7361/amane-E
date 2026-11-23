@@ -33,6 +33,8 @@ from .models import DeletePayload, DeleteResult
 from .protocol import TaskHandler, TaskResult
 
 if TYPE_CHECKING:
+    from re import Pattern
+
     from ..config import HotSettings
     from ..db.models import Library
     from ..db.repository import Repository
@@ -389,6 +391,24 @@ def _reverify_empty_dir(directory: Path) -> str | None:
     return "目录不再是空的" if children else None
 
 
+def _has_non_trailer_companion(
+    children: Sequence[os.DirEntry[str]], *, orphan_scan: OrphanScan, trailer: Pattern[str] | None
+) -> bool:
+    """与扫描侧同口径: 预告片之外还有附属文件时, 预告片按残留内容处理."""
+    for child in children:
+        path = Path(child.path)
+        try:
+            if stat.S_ISDIR(path.lstat().st_mode):
+                continue
+        except OSError:
+            continue
+        if trailer is not None and trailer.search(path.name):
+            continue
+        if orphan_scan.is_companion(path):
+            return True
+    return False
+
+
 def _reverify_subtree(directory: Path, *, orphan_scan: OrphanScan) -> str | None:
     """整棵子树的复验: 与扫描时的条件同口径 (冷却期除外).
 
@@ -400,6 +420,7 @@ def _reverify_subtree(directory: Path, *, orphan_scan: OrphanScan) -> str | None
     if unreadable is not None:
         return unreadable
     trailer = orphan_scan.trailer_matcher()
+    trailer_is_companion = _has_non_trailer_companion(children, orphan_scan=orphan_scan, trailer=trailer)
     for child in children:
         path = Path(child.path)
         try:
@@ -423,6 +444,8 @@ def _reverify_subtree(directory: Path, *, orphan_scan: OrphanScan) -> str | None
                 return refusal
             continue
         if junk is not None:
+            continue
+        if trailer_is_companion and orphan_scan.is_trailer(path, trailer=trailer):
             continue
         if orphan_scan.is_media(path, trailer=trailer):
             return f"目录里出现了媒体: {path.name}"

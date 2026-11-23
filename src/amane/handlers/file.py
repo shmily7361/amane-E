@@ -27,8 +27,10 @@ from ..organize import (
     ResolvedPaths,
     SubtitleConflict,
     TargetState,
+    discover_sidecars,
     discover_subtitles,
     execute_organize,
+    place_sidecars,
     place_subtitles,
     render_extrafanart_names,
     render_strm_content,
@@ -114,9 +116,30 @@ async def execute_file_operations(
         logger.warning("organize target state unknown", source=str(source_path), dest=str(dest), error=check.error)
         return FileOperationsResult(outcome=PlaceOutcome.FAILED, error=check.error)
 
+    # 发现字幕: 必须在视频移动前检查同目录.
+    subtitles: list[Path] = []
+    if library is not None:
+        subtitles = await discover_subtitles(source_path, library.subtitle_extensions, file_info)
+
+    org_result = await execute_organize(
+        source=source_path,
+        target_dir=paths.video.parent,
+        target_stem=paths.video.stem,
+        mode=move_mode,
+    )
+
+    if org_result.outcome is PlaceOutcome.CONFLICT:
+        return FileOperationsResult(outcome=PlaceOutcome.CONFLICT, conflict_target=org_result.dest)
+
+    # 视频就位后、重写本次资源前, 把旧目录里可解释的附属资源带到新目录.
+    # 否则修改模板重新整理时旧目录会留下 NFO/图片/预告片/.bif, prune_empty_dirs 也不会删它.
+    if org_result.outcome is PlaceOutcome.PLACED and org_result.dest:
+        sidecar_moves = await discover_sidecars(source_path, org_result.dest, paths, library=library)
+        await place_sidecars(sidecar_moves, move_mode)
+
     # 下载图片; 水印打在库路径副本上, 不能修改 Resource 原图.
     nfo_artifacts: dict[str, Path] = {}
-    if web_client and download_images:
+    if web_client and download_images and org_result.outcome is PlaceOutcome.PLACED:
         logger.debug("downloading images via store", number=metadata.number)
         kinds = set(copy_resources) if copy_resources is not None else set(DownloadableResource)
         nfo_artifacts = await _download_images_via_store(
@@ -132,21 +155,6 @@ async def execute_file_operations(
             library=library,
             allow_download=allow_resource_download,
         )
-
-    # 发现字幕: 必须在视频移动前检查同目录.
-    subtitles: list[Path] = []
-    if library is not None:
-        subtitles = await discover_subtitles(source_path, library.subtitle_extensions, file_info)
-
-    org_result = await execute_organize(
-        source=source_path,
-        target_dir=paths.video.parent,
-        target_stem=paths.video.stem,
-        mode=move_mode,
-    )
-
-    if org_result.outcome is PlaceOutcome.CONFLICT:
-        return FileOperationsResult(outcome=PlaceOutcome.CONFLICT, conflict_target=org_result.dest)
 
     # 写链接; 失败仍带 dest, 以便回写 MediaFile.path.
     if org_result.outcome is PlaceOutcome.PLACED and org_result.dest and paths.link is not None:

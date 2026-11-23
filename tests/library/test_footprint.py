@@ -55,6 +55,24 @@ class TestFootprint:
         assert video.exists()
 
     @pytest.mark.asyncio(loop_scope="function")
+    async def test_file_only_lists_emby_bif(self, repo: Repository, tmp_path: Path) -> None:
+        """Emby 的 .bif 按视频文件名放在正片旁边, 删除选中项时也要一起列出."""
+        lib, metas, item, video = await self._seed(repo, tmp_path)
+        (video.with_suffix(".bif")).write_bytes(b"bif")
+
+        outcome = build_footprint.sync(
+            library=lib,
+            items=[item],
+            indexed=[item],
+            metas=metas,
+            include_work_dir=False,
+        )
+
+        names = sorted(entry.path.name for entry in outcome.inventory.entries)
+        assert "NSFS-039.bif" in names
+        assert all(entry.reason is InventoryReason.EXPLICIT for entry in outcome.inventory.entries)
+
+    @pytest.mark.asyncio(loop_scope="function")
     async def test_work_dir_lists_everything_inside(self, repo: Repository, tmp_path: Path) -> None:
         """整目录删除按内容展开: 未被索引的同目录文件也在清单里, 用户看得到."""
         lib, metas, item, _video = await self._seed(repo, tmp_path)

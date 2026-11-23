@@ -386,6 +386,11 @@ def _walk(
         logger.warning("inventory scan directory unreadable", path=str(directory), error=str(exc))
         return None
 
+    # 预告片单独出现时仍按媒体保护; 与 NFO/图片等旧产物一起留下时, 它属于本次整理遗留的附属资源.
+    orphan_scan = state.orphan_scan
+    trailer_is_companion = orphan_scan is not None and _has_non_trailer_companion(
+        children, state=state, orphan_scan=orphan_scan
+    )
     total = 0
     removed = 0
     entries = 0
@@ -468,6 +473,11 @@ def _walk(
             undeletable = True
             level_veto = True
             continue
+        if trailer_is_companion and state.trailer_matcher is not None and state.trailer_matcher.search(path.name):
+            # 旧视频搬走后留下的预告片: 与 NFO/图片同批清理, 不再把目录判成「仍有媒体」.
+            bytes_total += child_stat.st_size
+            companions.append((path, child_stat))
+            continue
         orphan_scan = state.orphan_scan
         if orphan_scan is not None and orphan_scan.is_media(path, trailer=state.trailer_matcher):
             level_media = True
@@ -541,6 +551,26 @@ def _is_media(path: Path, *, state: _ScanState) -> bool:
     if orphan_scan is None:
         return False
     return orphan_scan.is_media(path, trailer=state.trailer_matcher)
+
+
+def _has_non_trailer_companion(
+    children: Sequence[os.DirEntry[str]], *, state: _ScanState, orphan_scan: OrphanScan
+) -> bool:
+    """本层是否有预告片之外的附属文件; 用来区分「旧目录残留」与「只放预告片的目录」."""
+    for child in children:
+        if child.name == TRASH_DIRNAME:
+            continue
+        try:
+            if not child.is_file(follow_symlinks=False):
+                continue
+        except OSError:
+            continue
+        path = Path(child.path)
+        if state.trailer_matcher is not None and state.trailer_matcher.search(path.name):
+            continue
+        if orphan_scan.is_companion(path):
+            return True
+    return False
 
 
 def _process_file(

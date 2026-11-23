@@ -204,7 +204,18 @@ def _add_products(
     except ValueError as exc:
         notices.append(FootprintNotice(FootprintNoticeKind.TEMPLATE_ERROR, path=source, detail=str(exc)))
         return
-    for product in (paths.nfo, paths.thumb, paths.poster, paths.fanart, paths.trailer, paths.extrafanart_dir):
+    products = (
+        paths.nfo,
+        paths.thumb,
+        paths.poster,
+        paths.fanart,
+        paths.trailer,
+        paths.extrafanart_dir,
+        # Emby 章节缩略图: 按视频文件名放在正片旁边, 模板里没有单独字段.
+        source.with_suffix(".bif"),
+        paths.video.with_suffix(".bif"),
+    )
+    for product in products:
         # 模板产物本来就可能没写过, 只收磁盘上已有的, 缺失不值得提示.
         if existing_disk_path(product, follow_symlinks=False) is not None:
             add(product)

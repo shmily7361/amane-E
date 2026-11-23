@@ -203,6 +203,20 @@ class TestOrphanVerdict:
 
         assert _reasons(_scan(lib), lib) == {}
 
+    def test_trailer_with_other_companions_is_orphan(self, tmp_path: Path) -> None:
+        """旧视频搬走后留下的预告片与 NFO/海报同属残留, 不应再把目录判成有媒体."""
+        lib = tmp_path / "lib"
+        _touch(lib / "old" / "trailer.mp4")
+        _touch(lib / "old" / "poster.jpg")
+        _touch(lib / "old" / "NSFS-039.nfo")
+
+        assert _reasons(_scan(lib), lib) == {
+            "old": InventoryReason.ORPHAN,
+            "old/trailer.mp4": InventoryReason.ORPHAN,
+            "old/poster.jpg": InventoryReason.ORPHAN,
+            "old/NSFS-039.nfo": InventoryReason.ORPHAN,
+        }
+
     def test_blacklisted_video_blocks_orphan_and_stays_an_entry(self, tmp_path: Path) -> None:
         """命中黑名单的视频同样是库内的一份内容: 目录不成残留, 它自己仍是黑名单条目."""
         lib = tmp_path / "lib"
@@ -246,7 +260,16 @@ class TestOrphanVerdict:
 class TestCompanionWhitelist:
     @pytest.mark.parametrize(
         "name",
-        ["NSFS-039.nfo", "POSTER.JPG", "cover.avif", "cover.HEIC", "NSFS-039.idx", "NSFS-039.ass", "thumb.tbn"],
+        [
+            "NSFS-039.nfo",
+            "POSTER.JPG",
+            "cover.avif",
+            "cover.HEIC",
+            "NSFS-039.idx",
+            "NSFS-039.ass",
+            "thumb.tbn",
+            "NSFS-039.bif",
+        ],
     )
     def test_whitelisted_names(self, tmp_path: Path, name: str) -> None:
         lib = tmp_path / "lib"

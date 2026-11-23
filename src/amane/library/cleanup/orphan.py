@@ -34,6 +34,8 @@ ORPHAN_COOLDOWN_SECONDS = 3600
 COMPANION_EXTENSIONS = frozenset(
     {
         ".nfo",
+        # Emby 章节缩略图索引; 随主视频一起整理, 遗留时也应进清理清单.
+        ".bif",
         # VobSub 的字幕索引与 .sub 成对; 不在 DEFAULT_SUBTITLE_EXTENSIONS 里, 缺了它这类残留无法清除.
         ".idx",
         ".jpg",
@@ -173,6 +175,10 @@ class OrphanScan:
 
     def is_companion(self, path: Path) -> bool:
         return path.suffix.lower() in self.companion_extensions
+
+    def is_trailer(self, path: Path, *, trailer: Pattern[str] | None) -> bool:
+        """预告片不是正片; 与 NFO/图片等一起出现在旧目录时按附属文件处理."""
+        return trailer is not None and bool(trailer.search(path.name))
 
     def verdict(
         self,

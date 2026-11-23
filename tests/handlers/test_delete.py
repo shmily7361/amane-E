@@ -689,6 +689,25 @@ def test_reverify_subtree_reports_reason(tmp_path: Path, name: str, is_dir: bool
     assert delete_module._reverify_subtree(container, orphan_scan=_orphan_scan(tmp_path)) == expected
 
 
+def test_reverify_subtree_allows_trailer_with_companions(tmp_path: Path) -> None:
+    """扫描侧把「预告片 + NFO/图片」登记为残留后, 执行前复验不能改判成有媒体."""
+    container = tmp_path / "old"
+    container.mkdir()
+    (container / "trailer.mp4").write_bytes(b"trailer")
+    (container / "poster.jpg").write_bytes(b"poster")
+    (container / "NSFS-039.bif").write_bytes(b"bif")
+    orphan_scan = OrphanScan.from_library(
+        library_root=tmp_path,
+        scope_dir=tmp_path,
+        subtitle_extensions=[".srt"],
+        trailer_pattern="(?i)trailer",
+        patterns=[],
+        media_extensions=None,
+    )
+
+    assert delete_module._reverify_subtree(container, orphan_scan=orphan_scan) is None
+
+
 def test_reverify_empty_dir_reports_reason(tmp_path: Path) -> None:
     """空目录条目只按目录是否仍为空判定: 执行侧删目录是递归的."""
     empty = tmp_path / "empty"

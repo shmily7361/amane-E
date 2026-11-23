@@ -15,6 +15,7 @@ from .path_templates import (
     validate_extrafanart_name_template,
     validate_path_template,
 )
+from .sidecars import SidecarConflict, SidecarMove, discover_sidecars, place_sidecars
 from .strm_content import (
     StrmContentTemplate,
     normalize_strm_content_template,
@@ -32,15 +33,19 @@ __all__ = [
     "PathTemplate",
     "PlaceOutcome",
     "ResolvedPaths",
+    "SidecarConflict",
+    "SidecarMove",
     "StrmContentTemplate",
     "SubtitleConflict",
     "TargetCheck",
     "TargetState",
     "create_video_link",
+    "discover_sidecars",
     "discover_subtitles",
     "execute_organize",
     "normalize_link_template",
     "normalize_strm_content_template",
+    "place_sidecars",
     "place_subtitles",
     "render_extrafanart_names",
     "render_path_template",

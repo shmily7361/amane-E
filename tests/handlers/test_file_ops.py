@@ -92,6 +92,69 @@ def _paths(base: Path) -> ResolvedPaths:
     )
 
 
+@pytest.mark.asyncio(loop_scope="function")
+async def test_rerule_organize_relocates_old_sidecars(resource_store: ResourceStore, tmp_path: Path) -> None:
+    """改模板重新整理时, 旧目录的 NFO/图片/剧照/预告片/.bif 要跟着视频到新目录."""
+    old = tmp_path / "old"
+    old.mkdir()
+    src = old / "MIDV-123.mp4"
+    src.write_bytes(b"video")
+    old_files = {
+        old / "MIDV-123.nfo": b"old nfo",
+        old / "poster.jpg": b"poster",
+        old / "thumb.jpg": b"thumb",
+        old / "fanart.jpg": b"fanart",
+        old / "trailer.mp4": b"trailer",
+        old / "MIDV-123.bif": b"bif",
+    }
+    for path, data in old_files.items():
+        path.write_bytes(data)
+    (old / "extrafanart").mkdir()
+    (old / "extrafanart" / "1.jpg").write_bytes(b"extra")
+
+    library = Library(
+        id=1,
+        name="lib",
+        path=str(tmp_path),
+        move_mode=MoveMode.MOVE,
+        trailer_pattern="(?i)trailer",
+        subtitle_extensions=[],
+        patterns=[],
+    )
+    media_file = MediaFile(path=str(src), library_id=1)
+    metadata = Metadata(number="MIDV-123", title="Movie")
+    paths = _paths(tmp_path / "new")
+
+    result = await execute_file_operations(
+        media_file,
+        metadata,
+        paths,
+        MoveMode.MOVE,
+        resource_store,
+        parse_file_info(str(src)),
+        download_images=False,
+        write_nfo=False,
+        copy_resources=[],
+        web_client=None,
+        config=None,
+        library=library,
+        safe_dirs=None,
+        allow_resource_download=False,
+    )
+
+    assert result.outcome is PlaceOutcome.PLACED
+    assert result.dest == paths.video
+    assert paths.video.read_bytes() == b"video"
+    assert paths.nfo.read_bytes() == b"old nfo"
+    assert paths.poster.read_bytes() == b"poster"
+    assert paths.thumb.read_bytes() == b"thumb"
+    assert paths.fanart.read_bytes() == b"fanart"
+    assert paths.trailer.read_bytes() == b"trailer"
+    assert (paths.extrafanart_dir / "1.jpg").read_bytes() == b"extra"
+    assert paths.video.with_suffix(".bif").read_bytes() == b"bif"
+    assert not any(path.is_file() for path in old.rglob("*"))
+
+
 @pytest.mark.asyncio
 async def test_internal_poster_and_trailer(resource_store: ResourceStore, tmp_path: Path):
     """poster = 内部派生 URL → 从 store 取文件; trailer 下载并复制."""
