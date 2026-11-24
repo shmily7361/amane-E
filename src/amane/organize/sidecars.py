@@ -110,18 +110,34 @@ def discover_sidecars(
     )
 
     try:
-        children = sorted(source_dir.iterdir(), key=lambda p: p.name.casefold())
+        # 与视频同名的产物优先占主目标; 分集/通用名只能在余下的目标里落位.
+        children = sorted(
+            source_dir.iterdir(),
+            key=lambda p: (
+                0 if p.stem.casefold() == ctx.source_stem.casefold() else 1,
+                p.name.casefold(),
+            ),
+        )
     except OSError:
         return []
 
     moves: list[SidecarMove] = []
-    seen_targets: set[str] = set()
+    claims: dict[str, Path] = {}
 
     def add(candidate: Path, target: Path) -> None:
         key = path_key(target)
-        if key in seen_targets or path_key(candidate) == key:
+        if path_key(candidate) == key:
             return
-        seen_targets.add(key)
+        claimed_by = claims.get(key)
+        if claimed_by is not None:
+            logger.warning(
+                "sidecar target already claimed",
+                source=str(candidate),
+                target=str(target),
+                claimed_by=str(claimed_by),
+            )
+            return
+        claims[key] = candidate
         moves.append(SidecarMove(source=candidate, target=target))
 
     for child in children:
@@ -204,6 +220,9 @@ def _target_for(child: Path, ctx: _SidecarContext) -> Path | None:
         remainder = child.stem[len(ctx.source_stem) :] if _belongs_to_video(child, ctx.source_stem) else ""
         return ctx.target_video.parent / f"{ctx.target_video.stem}{remainder}.bif"
     if suffix == ".nfo":
+        remainder = child.stem[len(ctx.source_stem) :] if _belongs_to_video(child, ctx.source_stem) else ""
+        if remainder:
+            return paths.nfo.with_name(f"{paths.nfo.stem}{remainder}{paths.nfo.suffix}")
         return paths.nfo
     if suffix in _IMAGE_SUFFIXES:
         if "poster" in name:

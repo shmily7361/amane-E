@@ -13,7 +13,7 @@ from amane.db.models import Library, MediaFile, Metadata
 from amane.enums import DownloadableResource
 from amane.handlers.file import _write_into_library, execute_file_operations
 from amane.media import ResourceStore
-from amane.organize import MoveMode, PlaceOutcome, ResolvedPaths, resolve_paths
+from amane.organize import MoveMode, PlaceOutcome, ResolvedPaths, SidecarMove, place_sidecars, resolve_paths
 from amane.parsing import ContentType, parse_file_info
 
 if TYPE_CHECKING:
@@ -101,6 +101,7 @@ async def test_rerule_organize_relocates_old_sidecars(resource_store: ResourceSt
     src.write_bytes(b"video")
     old_files = {
         old / "MIDV-123.nfo": b"old nfo",
+        old / "MIDV-123-cd2.nfo": b"cd2 nfo",
         old / "poster.jpg": b"poster",
         old / "thumb.jpg": b"thumb",
         old / "fanart.jpg": b"fanart",
@@ -146,6 +147,7 @@ async def test_rerule_organize_relocates_old_sidecars(resource_store: ResourceSt
     assert result.dest == paths.video
     assert paths.video.read_bytes() == b"video"
     assert paths.nfo.read_bytes() == b"old nfo"
+    assert paths.nfo.with_name("MIDV-123-cd2.nfo").read_bytes() == b"cd2 nfo"
     assert paths.poster.read_bytes() == b"poster"
     assert paths.thumb.read_bytes() == b"thumb"
     assert paths.fanart.read_bytes() == b"fanart"
@@ -153,6 +155,24 @@ async def test_rerule_organize_relocates_old_sidecars(resource_store: ResourceSt
     assert (paths.extrafanart_dir / "1.jpg").read_bytes() == b"extra"
     assert paths.video.with_suffix(".bif").read_bytes() == b"bif"
     assert not any(path.is_file() for path in old.rglob("*"))
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_sidecar_conflict_is_reported(tmp_path: Path) -> None:
+    """目标已被占用时附属资源留在原处, 但冲突返回给整理结果记账."""
+    old = tmp_path / "old"
+    old.mkdir()
+    source = old / "poster.jpg"
+    source.write_bytes(b"old")
+    paths = _paths(tmp_path / "new")
+    paths.poster.parent.mkdir(parents=True)
+    paths.poster.write_bytes(b"occupied")
+
+    conflicts = await place_sidecars([SidecarMove(source=source, target=paths.poster)], MoveMode.MOVE)
+
+    assert len(conflicts) == 1
+    assert conflicts[0].source == source and conflicts[0].target == paths.poster
+    assert source.read_bytes() == b"old"
 
 
 @pytest.mark.asyncio

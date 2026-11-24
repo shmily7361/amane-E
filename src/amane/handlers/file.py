@@ -25,6 +25,7 @@ from ..organize import (
     MoveMode,
     PlaceOutcome,
     ResolvedPaths,
+    SidecarConflict,
     SubtitleConflict,
     TargetState,
     discover_sidecars,
@@ -74,6 +75,7 @@ class FileOperationsResult:
     conflict_target: Path | None = None
     """CONFLICT 时被占用的目标路径."""
     subtitle_conflicts: list[SubtitleConflict] = field(default_factory=list)
+    sidecar_conflicts: list[SidecarConflict] = field(default_factory=list)
     error: str | None = None
 
 
@@ -131,11 +133,12 @@ async def execute_file_operations(
     if org_result.outcome is PlaceOutcome.CONFLICT:
         return FileOperationsResult(outcome=PlaceOutcome.CONFLICT, conflict_target=org_result.dest)
 
+    sidecar_conflicts: list[SidecarConflict] = []
     # 视频就位后、重写本次资源前, 把旧目录里可解释的附属资源带到新目录.
     # 否则修改模板重新整理时旧目录会留下 NFO/图片/预告片/.bif, prune_empty_dirs 也不会删它.
     if org_result.outcome is PlaceOutcome.PLACED and org_result.dest:
         sidecar_moves = await discover_sidecars(source_path, org_result.dest, paths, library=library)
-        await place_sidecars(sidecar_moves, move_mode)
+        sidecar_conflicts = await place_sidecars(sidecar_moves, move_mode)
 
     # 下载图片; 水印打在库路径副本上, 不能修改 Resource 原图.
     nfo_artifacts: dict[str, Path] = {}
@@ -202,7 +205,10 @@ async def execute_file_operations(
     if org_result.outcome is PlaceOutcome.PLACED:
         logger.debug("file operations done", number=metadata.number, dest=str(org_result.dest), mode=str(move_mode))
         return FileOperationsResult(
-            outcome=PlaceOutcome.PLACED, dest=org_result.dest, subtitle_conflicts=subtitle_conflicts
+            outcome=PlaceOutcome.PLACED,
+            dest=org_result.dest,
+            subtitle_conflicts=subtitle_conflicts,
+            sidecar_conflicts=sidecar_conflicts,
         )
     logger.debug("file operations failed", number=metadata.number, error=org_result.error)
     return FileOperationsResult(outcome=PlaceOutcome.FAILED, error=org_result.error)
@@ -700,7 +706,7 @@ class OrganizeHandler(TaskHandler[OrganizePayload, OrganizeResult]):
                         organized += 1
                         if collect_prune:
                             prune_candidates.update(ancestor_dirs(file_path, library_root=library_root))
-                        # 字幕冲突的 path 是留在原处的那条字幕, 不是视频源路径.
+                        # 字幕/附属资源冲突的 path 是留在原处的那条文件, 不是视频源路径.
                         conflicted += _record_conflicts(
                             conflicts,
                             [
@@ -710,6 +716,14 @@ class OrganizeHandler(TaskHandler[OrganizePayload, OrganizeResult]):
                                     reason=OrganizeConflictReason.subtitle_target_exists,
                                 )
                                 for item in fop_result.subtitle_conflicts
+                            ]
+                            + [
+                                OrganizeConflict(
+                                    path=str(item.source),
+                                    target=str(item.target),
+                                    reason=OrganizeConflictReason.target_exists,
+                                )
+                                for item in fop_result.sidecar_conflicts
                             ],
                         )
                     case PlaceOutcome.CONFLICT:
