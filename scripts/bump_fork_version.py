@@ -104,11 +104,21 @@ def write_versions(root: Path, version: str) -> None:
 
 
 def generate(root: Path) -> None:
-    _run([sys.executable, str(ROOT / "scripts" / "export_openapi.py")], root)
-    if shutil.which("pnpm") is None:
-        print("pnpm 不可用: 跳过 TS client 生成, 请手动执行 pnpm gen-client")  # noqa: T201
+    _run([sys.executable, str(root / "scripts" / "export_openapi.py")], root)
+    if shutil.which("pnpm") is None or not (root / "web" / "node_modules").is_dir():
+        print("pnpm 或 web/node_modules 不可用: 跳过 TS client 生成, 请手动执行 pnpm gen-client")  # noqa: T201
         return
     _run(["pnpm", "gen-client"], root / "web")
+
+
+def rollback_written(root: Path) -> None:
+    """写版本后失败时恢复发版脚本会改的文件, 不碰用户预写的 CHANGELOG."""
+    paths = ["pyproject.toml", "uv.lock", "web/openapi.json", "web/src/client"]
+    tracked = git(root, "ls-files", "--", *paths).splitlines()
+    if not tracked:
+        return
+    git(root, "reset", "--", *tracked)
+    git(root, "checkout", "--", *tracked)
 
 
 def verify_written(root: Path) -> None:
@@ -119,21 +129,22 @@ def verify_written(root: Path) -> None:
         raise BumpError("写入后版本不一致")
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, root: Path = ROOT) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("target", help="E<major>.<minor>, 例如 E0.30")
     parser.add_argument("--dry-run", action="store_true", help="只检查并打印目标, 不写文件")
     args = parser.parse_args(argv)
 
+    written = False
     try:
         target = parse_target(args.target)
-        current = pyproject_version(ROOT)
-        unexpected = extra_paths(git_changed_paths(ROOT), PREBUMP_ALLOWED_PATHS)
+        current = pyproject_version(root)
+        unexpected = extra_paths(git_changed_paths(root), PREBUMP_ALLOWED_PATHS)
         if unexpected:
             raise BumpError(f"工作区不干净, 拒绝 bump: {', '.join(sorted(unexpected))}")
-        require_ancestor(ROOT, target.base)
-        require_changelog(ROOT, target.display)
-        if tag_exists(ROOT, target.tag):
+        require_ancestor(root, target.base)
+        require_changelog(root, target.display)
+        if tag_exists(root, target.tag):
             raise BumpError(f"tag 已存在: {target.tag}")
         if target.full == current and not args.dry_run:
             raise BumpError(f"目标版本与当前版本相同: {current}")
@@ -145,22 +156,28 @@ def main(argv: list[str] | None = None) -> int:
             print("dry-run: 未写入")  # noqa: T201
             return 0
 
-        write_versions(ROOT, target.full)
-        generate(ROOT)
-        verify_written(ROOT)
+        write_versions(root, target.full)
+        written = True
+        generate(root)
+        verify_written(root)
 
-        changed = git_changed_paths(ROOT)
+        changed = git_changed_paths(root)
         unexpected = extra_paths(changed, ALLOWED_PATHS)
         if unexpected:
             raise BumpError(f"bump 改动了白名单以外的文件, 已中止提交: {', '.join(sorted(unexpected))}")
         to_add = allowed_changed(changed, ALLOWED_PATHS)
         if "pyproject.toml" not in to_add:
             raise BumpError("未改动 pyproject.toml")
-        git(ROOT, "add", "--", *to_add)
-        git(ROOT, "commit", "-m", f"release: {target.display}")
-        git(ROOT, "tag", "-a", target.tag, "-m", target.tag)
-    except BumpError as e:
-        print(f"发版失败: {e}", file=sys.stderr)  # noqa: T201
+        git(root, "add", "--", *to_add)
+        git(root, "commit", "-m", f"release: {target.display}")
+        git(root, "tag", "-a", target.tag, "-m", target.tag)
+    except Exception as e:
+        if written:
+            rollback_written(root)
+        if isinstance(e, BumpError):
+            print(f"发版失败: {e}", file=sys.stderr)  # noqa: T201
+        else:
+            print(f"发版失败: {e}", file=sys.stderr)  # noqa: T201
         return 1
     return 0
 

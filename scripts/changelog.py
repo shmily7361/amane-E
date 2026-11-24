@@ -87,20 +87,28 @@ def split_h2_sections(text: str) -> list[tuple[str, str]]:
     return sections
 
 
+def _render_section(section: str, want: str) -> str:
+    stripped = section.strip()
+    rest = stripped.split("\n", 1)
+    if len(rest) < 2 or not rest[1].strip():
+        raise ChangelogError(f"CHANGELOG 中 v{want} 节为空")
+    return stripped + "\n"
+
+
 def extract_section(text: str, version: str) -> str:
     want = normalize_version(version)
     if not want:
         raise ChangelogError("版本号为空")
+    sections = split_h2_sections(text)
+    # 先精确匹配: 官方 0.30.0 与 fork E0.30 互为别名, 但发布说明必须各取各的节.
+    for title, section in sections:
+        if heading_version(title) == want:
+            return _render_section(section, want)
     aliases = version_aliases(want)
-    for title, section in split_h2_sections(text):
+    for title, section in sections:
         found = heading_version(title)
-        if found is None or not ({found} & aliases):
-            continue
-        stripped = section.strip()
-        rest = stripped.split("\n", 1)
-        if len(rest) < 2 or not rest[1].strip():
-            raise ChangelogError(f"CHANGELOG 中 v{want} 节为空")
-        return stripped + "\n"
+        if found is not None and found in aliases:
+            return _render_section(section, want)
     raise ChangelogError(f"CHANGELOG 中没有 v{want} 节")
 
 
