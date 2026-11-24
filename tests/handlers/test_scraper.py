@@ -103,6 +103,31 @@ class TestScrapeHandler:
         assert metadata.title == "Mock Title"
 
     @pytest.mark.asyncio(loop_scope="function")
+    async def test_explicit_success_records_name_mapping(self, repo: Repository, handler) -> None:
+        """指定番号刮削成功后按文件名记住番号, 非显式刮削不留映射."""
+        explicit = await repo.create_media_file(library_id=1, path="/inbox/UNKNOWN-1.mp4")
+        implicit = await repo.create_media_file(library_id=1, path="/inbox/UNKNOWN-2.mp4")
+
+        result = await handler.handle(
+            ScrapePayload(
+                media_file_id=explicit.id,
+                number="MIDV-123",
+                content_type=ContentType.CENSORED,
+                number_explicit=True,
+            )
+        )
+        assert result.success is True
+        updated = await repo.get_media_file(explicit.id)
+        assert updated is not None and updated.number == "MIDV-123"
+        assert await repo.get_name_mapping(explicit.path) == "MIDV-123"
+        assert await repo.get_name_mapping(implicit.path) is None
+
+        await handler.handle(
+            ScrapePayload(media_file_id=implicit.id, number="MIDV-456", content_type=ContentType.CENSORED)
+        )
+        assert await repo.get_name_mapping(implicit.path) is None
+
+    @pytest.mark.asyncio(loop_scope="function")
     async def test_payload_content_type_lands_on_new_entry(self, repo: Repository, resource_store):
         """payload 的条目类型写进新建条目, 不按番号重新推断."""
         factory = RecordingFactory({"javdb": MockCrawler()})
@@ -669,6 +694,22 @@ class TestRefreshHandler:
         assert result.result.added == 2
         assert result.result.removed == 0
         assert result.result.scrape == 2
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_scan_uses_name_mapping(self, repo: Repository, tmp_path: Path) -> None:
+        """扫描发现同名文件时用已确认番号, 并把映射写回 MediaFile.number."""
+        video = tmp_path / "weird-name.mp4"
+        video.write_bytes(b"\x00" * 100)
+        await repo.upsert_name_mapping(video, "MAPPED-001")
+
+        result = await RefreshHandler(repo=repo).handle(RefreshPayload(library_id=1, path=str(tmp_path)))
+
+        assert result.success is True
+        media = await repo.get_media_file_by_path(str(video))
+        assert media is not None and media.number == "MAPPED-001"
+        assert len(result.followups) == 1
+        assert result.followups[0].task_type is TaskType.SCRAPE
+        assert result.followups[0].payload["number"] == "MAPPED-001"
 
     @pytest.mark.asyncio(loop_scope="function")
     @pytest.mark.parametrize(

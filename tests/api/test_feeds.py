@@ -168,6 +168,7 @@ class TestFeedsCrud:
             "media_file_id": None,
             "use_cache": [],
             "write_back": False,
+            "number_explicit": False,
         }
 
         assert (

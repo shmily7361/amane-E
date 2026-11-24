@@ -211,6 +211,20 @@ class MediaFile(SQLModel, table=True):
         return self.has_subtitle_in_name or self.has_external_subtitle
 
 
+class NameMapping(SQLModel, table=True):
+    """文件名 → 番号映射: 手动指定番号并刮削成功后建立, 下次同名文件直接套用.
+
+    ``file_name`` 存 ``path_key(Path(path).name)`` 的比较键 (NFC + 平台大小写归一), 不暴露给 API 契约.
+    """
+
+    __tablename__ = "name_mappings"  # type: ignore[assignment]
+
+    file_name: str = Field(primary_key=True)
+    number: str = Field(nullable=False, index=True)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+
 def has_subtitle_predicate() -> ColumnElement[bool]:
     """`MediaFile.has_subtitle` 的 SQL 等价式: 文件名标记或同目录字幕命中.
 

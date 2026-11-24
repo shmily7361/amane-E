@@ -185,12 +185,13 @@ class ScrapeRequest(BaseModel):
     async def resolve(self, repo: Repository) -> ScrapePayload:
         """media 不存在时抛 HTTPException(404)."""
         media = await repo.get_media_file(self.media_id) if self.media_id is not None else None
-        payload = self.build_payload(media)
+        mapped_number = await repo.get_name_mapping(media.path) if media is not None and self.number is None else None
+        payload = self.build_payload(media, mapped_number=mapped_number)
         if payload is None:
             raise HTTPException(status_code=404, detail=f"媒体文件 {self.media_id} 不存在")
         return payload
 
-    def build_payload(self, media: MediaFile | None) -> ScrapePayload | None:
+    def build_payload(self, media: MediaFile | None, *, mapped_number: str | None = None) -> ScrapePayload | None:
         """``media_id`` 非空时用调用方查到的行组装; 该行为 None 时返回 None, 由调用方决定计入 missing 还是 404."""
         if self.media_id is not None:
             if media is None:
@@ -199,6 +200,14 @@ class ScrapeRequest(BaseModel):
                 return ScrapePayload(
                     number=self.number,
                     content_type=self.content_type or infer_content_type(self.number),
+                    media_file_id=self.media_id,
+                    use_cache=self.use_cache,
+                    number_explicit=True,
+                )
+            if mapped_number:
+                return ScrapePayload(
+                    number=mapped_number,
+                    content_type=self.content_type or infer_content_type(mapped_number),
                     media_file_id=self.media_id,
                     use_cache=self.use_cache,
                 )

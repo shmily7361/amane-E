@@ -1,4 +1,5 @@
 from collections.abc import Iterator, Sequence
+from pathlib import Path
 from typing import Annotated
 
 import structlog
@@ -11,6 +12,7 @@ from ...db.models import SortOrder, Task, TaskSortField, TaskStatus, TaskType
 from ...handlers import ActorScrapePayload, ScrapePayload
 from ...observability import TaskLogPage, build_record_zip, read_task_log
 from ...utils.model import to_resp
+from ...utils.path import path_key
 from ..deps import ConfigDep, RepoDep, RuntimeDep
 from ..models import (
     ActorScrapeSubmission,
@@ -239,11 +241,17 @@ async def _resolve_batch_submission(
     repo: Repository,
     files_by_id: dict[int, MediaFile],
     known_actors: set[int],
+    name_mappings: dict[str, str],
 ) -> tuple[TaskType, BaseModel] | None:
     """解析单条提交; 目标实体不存在返回 None (计入 missing), 参数级错误照常抛出."""
     if isinstance(submission, ScrapeSubmission):
         media = files_by_id.get(submission.media_id) if submission.media_id is not None else None
-        payload = submission.build_payload(media)
+        mapped = (
+            name_mappings.get(path_key(Path(media.path).name))
+            if media is not None and submission.number is None
+            else None
+        )
+        payload = submission.build_payload(media, mapped_number=mapped)
         return None if payload is None else (TaskType.SCRAPE, payload)
     if isinstance(submission, ActorScrapeSubmission):
         if submission.actor_id not in known_actors:
@@ -281,6 +289,10 @@ async def batch_submit_tasks(req: TaskBatchSubmitRequest, repo: RepoDep) -> Task
     actor_ids = {s.actor_id for s in submissions if isinstance(s, ActorScrapeSubmission)}
     # 存在性检查借 get_actor_names: 不存在的 id 不出现在结果里.
     known_actors = set(await repo.get_actor_names(sorted(actor_ids))) if actor_ids else set()
+    need_mappings = any(
+        isinstance(s, ScrapeSubmission) and s.media_id is not None and s.number is None for s in submissions
+    )
+    name_mappings = await repo.list_name_mappings() if need_mappings else {}
 
     entries: list[tuple[TaskType, BaseModel] | None] = []
     seen: set[tuple[TaskType, str, int | None]] = set()
@@ -288,7 +300,7 @@ async def batch_submit_tasks(req: TaskBatchSubmitRequest, repo: RepoDep) -> Task
     skipped = 0
     for submission in submissions:
         try:
-            entry = await _resolve_batch_submission(submission, repo, files_by_id, known_actors)
+            entry = await _resolve_batch_submission(submission, repo, files_by_id, known_actors, name_mappings)
         except HTTPException as exc:
             if exc.status_code != 404:
                 raise

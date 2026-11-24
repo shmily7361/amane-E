@@ -12,6 +12,7 @@
 |------|------|--------|
 | `MediaFile` | 磁盘上视频文件的索引 | `path` UNIQUE (**NFC**; 目录列出的 NFD 与 NFC 是同一路径) |
 | `Metadata` | 番号级聚合元数据 | `number` UNIQUE (**大小写不敏感**; 存库保留首次写入的原始大小写) |
+| `NameMapping` | 用户确认过的「文件名 → 番号」映射 | `file_name` UNIQUE (`path_key(Path(path).name)` 比较键) |
 | `Resource` | URL 级下载缓存 | `url` UNIQUE |
 | `Task` | 持久化任务队列 | `id` |
 | `Library` | 媒体库: 根目录 + 路径模板 + 整理方式 + 自动化级别 | `id` |
@@ -24,6 +25,8 @@
 | `Comment` | 绑定于 Metadata 的用户评论 | `id` |
 
 `MediaFile` 与 `Metadata` 解耦: **Metadata 是一等公民** (用户直接管理的番号级条目), 有效性不依赖本地文件; `MediaFile` 是磁盘视频的索引, 能对应到某条 Metadata 时以多对一绑定 `metadata_id`. `metadata_id IS NULL` 的文件 (解析失败 / 尚未刮削) 与**没有任何 MediaFile 的 Metadata** (by-number 刮削、只囤元数据) 都是常态, 不是待清理的对象.
+
+`NameMapping` 只在**用户显式指定番号且该次 SCRAPE 成功**后写入: 键是文件名比较键 (`path_key`, NFC + 平台大小写归一), 值取成功的番号. 同名文件再次被 watcher / REFRESH / 手动提交发现时, 映射优先于 `parse_file_info` 的正则结果; 没有映射才回退正常解析. 仅带 media_id 且不指定番号的提交因此可以自动套用用户此前确认过的映射. 映射不进入 Metadata API 契约, 也不因文件删除而级联 — 同名文件再次出现仍能命中.
 
 类型 (`content_type`) 是**番号的属性**, 落在 `Metadata`: 只在条目创建时落定 (有发现路径时随其路径关键词, 否则只依据番号), 番号不可改, 因此不随文件增删或后续刮削漂移; 它决定刮削路由, 也供「类型」筛选与有码 / 无码角标使用, 不进对外 PATCH. `ContentType.chinese` 是国产, 不是中字.
 

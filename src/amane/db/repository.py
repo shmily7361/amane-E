@@ -25,6 +25,7 @@ class Repository(
     repos.LibrariesRepoMixin,
     repos.MediaRepoMixin,
     repos.MetadataRepoMixin,
+    repos.NameMappingRepoMixin,
     repos.SchedulesRepoMixin,
     repos.TasksRepoMixin,
 ):

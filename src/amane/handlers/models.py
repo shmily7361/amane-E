@@ -109,6 +109,8 @@ class ScrapePayload(BaseModel):
     use_cache: set[CacheKind] = {CacheKind.metadata, CacheKind.trans}
     write_back: bool = False
     """显式重刮后把结果写回关联文件; 仅按番号刮削时生效."""
+    number_explicit: bool = False
+    """number 来自用户显式指定 (而非文件名解析/映射); 成功后登记文件名→番号映射."""
 
 
 def build_feed_scrape_payload(feed: Feed, number: str) -> ScrapePayload:

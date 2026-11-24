@@ -236,6 +236,7 @@ async def test_list_and_batch_feed_items(feed_deps: AgentDeps) -> None:
         "media_file_id": None,
         "use_cache": [],
         "write_back": False,
+        "number_explicit": False,
     }
 
 

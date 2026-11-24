@@ -17,6 +17,7 @@ from watchdog.events import (
 )
 from watchdog.observers.polling import PollingObserver
 
+from amane.db import TaskType
 from amane.db.repository import Repository
 from amane.enums import LibraryAutomation
 from amane.events import EventBus
@@ -423,6 +424,23 @@ class TestWatcherService:
     @pytest.fixture
     def service(self, repo: Repository, bus):
         return WatcherService(repo, bus, use_polling=True, check_interval=0.05, observer_timeout=0.1)
+
+    @pytest.mark.asyncio(loop_scope="function")
+    async def test_file_found_uses_name_mapping(self, service, repo: Repository, tmp_path: Path) -> None:
+        """同名文件再次出现时直接用已确认番号, 不再依赖文件名正则."""
+        path = tmp_path / "weird-name.mp4"
+        path.write_bytes(b"video")
+        library = await repo.create_library(name="lib", path=str(tmp_path), automation=LibraryAutomation.SCRAPE)
+        assert library.id is not None
+        await repo.upsert_name_mapping(path, "MAPPED-001")
+
+        await service._on_file_found_inner(path, library.id)
+
+        media = await repo.get_media_file_by_path(str(path))
+        assert media is not None and media.number == "MAPPED-001"
+        tasks = await repo.list_tasks(task_types=[TaskType.SCRAPE])
+        assert len(tasks) == 1
+        assert tasks[0].payload["number"] == "MAPPED-001"
 
     @pytest.mark.asyncio(loop_scope="function")
     async def test_start_without_watch_paths(self, service):

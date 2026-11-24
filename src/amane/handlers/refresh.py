@@ -6,8 +6,8 @@ import structlog
 
 from ..db import TaskType
 from ..library import MEDIA_EXTENSIONS, InventoryStore, LibraryHit, LibraryScan, OrphanScan, scan_inventory
-from ..parsing import parse_file_info
-from ..utils.path import nfc_path
+from ..parsing import infer_content_type, parse_file_info
+from ..utils.path import nfc_path, path_key
 from ..utils.threads import path_exists, path_is_dir
 from ._common import register_media_file
 from .models import RefreshPayload, RefreshResult, ScanMode, ScrapePayload
@@ -97,18 +97,18 @@ class RefreshHandler(TaskHandler[RefreshPayload, RefreshResult]):
                     self._inventory_store.put(inventory)
                 for hit in inventory.media_hits:
                     file_path = hit.path
-                    path_key = nfc_path(str(file_path))
+                    file_key = nfc_path(str(file_path))
                     walked += 1
                     if seen is not None:
-                        seen.add(path_key)
+                        seen.add(file_key)
                     if walked % _WALK_LOG_EVERY == 0:
                         logger.info("scan walking", path=payload.path, seen=walked, added=added)
-                    if path_key not in existing_by_path:
+                    if file_key not in existing_by_path:
                         media = await register_media_file(self._repo, payload.library_id, file_path, library=library)
-                        existing_by_path[path_key] = media
+                        existing_by_path[file_key] = media
                         added += 1
                     else:
-                        subtitles += await self._sync_external_subtitle(existing_by_path[path_key], hit)
+                        subtitles += await self._sync_external_subtitle(existing_by_path[file_key], hit)
                 if added:
                     logger.info("new files discovered", path=payload.path, count=added)
 
@@ -133,18 +133,28 @@ class RefreshHandler(TaskHandler[RefreshPayload, RefreshResult]):
 
         # 扇出 SCRAPE; 只描述后继, 由完成事务创建.
         followups = []
+        name_mappings = await self._repo.list_name_mappings() if media_files else {}
         for f in media_files:
-            parsed = parse_file_info(f.path)
             assert f.id is not None
-            assert parsed.number is not None
+            mapped = name_mappings.get(path_key(Path(f.path).name))
+            if mapped:
+                number = mapped
+                content_type = infer_content_type(number)
+                if f.number != number:
+                    await self._repo.update_media_file(f.id, number=number)
+            else:
+                parsed = parse_file_info(f.path)
+                assert parsed.number is not None
+                number = parsed.number
+                content_type = parsed.content_type
             followups.append(
                 FollowupTask(
                     key=f"scrape:{f.id}",
                     task_type=TaskType.SCRAPE,
                     payload=ScrapePayload(
                         media_file_id=f.id,
-                        number=parsed.number,
-                        content_type=parsed.content_type,
+                        number=number,
+                        content_type=content_type,
                         use_cache=payload.use_cache,
                     ).model_dump(mode="json"),
                 )

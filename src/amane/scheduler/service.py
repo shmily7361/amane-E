@@ -15,7 +15,7 @@ from ..events import EventBus, EventType
 from ..handlers._common import refresh_external_subtitle, register_media_file, scan_library
 from ..handlers.models import ScrapePayload
 from ..library import LibraryFileKind, LibraryScan
-from ..parsing import parse_file_info
+from ..parsing import infer_content_type, parse_file_info
 from ..utils.path import is_descendant, path_is_under
 from .clouddrive import CloudDriveChange, CloudDriveRoute, local_for, match_route
 from .watcher import FileWatcher
@@ -500,22 +500,30 @@ class WatcherService:
         assert media.id is not None
         logger.info("file discovered", path=path_str, media_file_id=media.id, library_id=library_id)
 
-        try:
-            parsed = parse_file_info(path_str)
-        except Exception:
-            logger.debug("cannot parse number", path=path_str)
-            parsed = None
+        mapped_number = await self._repo.get_name_mapping(path_str)
+        if mapped_number:
+            number = mapped_number
+            content_type = infer_content_type(number)
+            logger.info("number resolved from name mapping", number=number, path=path_str)
+        else:
+            try:
+                parsed = parse_file_info(path_str)
+            except Exception:
+                logger.debug("cannot parse number", path=path_str)
+                parsed = None
+            number = parsed.number if parsed is not None else None
+            content_type = parsed.content_type if parsed is not None else None
 
-        if parsed is not None and parsed.number is not None:
-            await self._repo.update_media_file(media.id, number=parsed.number)
+        if number is not None:
+            await self._repo.update_media_file(media.id, number=number)
             if library is not None and library.automation == LibraryAutomation.SCRAPE:
                 task = await self._repo.create_task(
                     task_type=TaskType.SCRAPE,
                     payload=ScrapePayload(
-                        media_file_id=media.id, number=parsed.number, content_type=parsed.content_type
+                        media_file_id=media.id, number=number, content_type=content_type or infer_content_type(number)
                     ),
                 )
-                logger.info("scrape task submitted", task_id=task.id, number=parsed.number, path=path_str)
+                logger.info("scrape task submitted", task_id=task.id, number=number, path=path_str)
 
         await self._event_bus.emit(EventType.FILE_DISCOVERED, {"path": path_str, "media_file_id": media.id})
 

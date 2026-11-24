@@ -216,6 +216,18 @@ class ScrapeHandler(TaskHandler[ScrapePayload, ScrapeResult]):
 
         await finalize_media_file(self._repo, payload.media_file_id, meta.id)
 
+        # 用户显式指定番号且本次刮削成功后, 记住「文件名 → 番号」; 下次同名文件无需再手动指定.
+        # 映射失败不应推翻已成功的刮削结果, 只记录告警.
+        if payload.number_explicit and file is not None:
+            try:
+                # 当前文件也按用户确认的番号回写, 列表/筛选不再显示解析失败时的旧番号.
+                await self._repo.update_media_file(payload.media_file_id, number=payload.number)
+                await self._repo.upsert_name_mapping(file.path, payload.number)
+            except Exception:
+                current().warning(
+                    "name mapping write failed", media_file_id=payload.media_file_id, number=payload.number
+                )
+
         # 为尚未刮削的演员扇出 ACTOR_SCRAPE.
         actor_followups = await self._actor_scrape_followups(meta.actors)
         # 库开启自动整理时整理本次文件; 显式按番号重刮则写回该元数据的关联文件.
