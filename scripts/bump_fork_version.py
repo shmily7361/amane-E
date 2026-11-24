@@ -54,8 +54,8 @@ def parse_target(raw: str) -> ForkVersion:
     major, minor = match.group("major"), match.group("minor")
     return ForkVersion(
         display=f"E{major}.{minor}",
-        base=f"0.{major}.{minor}.0",
-        full=f"0.{major}.{minor}.0+e0.{major}.{minor}",
+        base=f"{major}.{minor}.0",
+        full=f"{major}.{minor}.0+e{major}.{minor}",
     )
 
 

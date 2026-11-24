@@ -51,8 +51,8 @@ def version_aliases(raw: str) -> frozenset[str]:
         parts = text[1:].split(".")
         if len(parts) >= 2:
             major, minor = parts[0], parts[1]
-            aliases.add(f"0.{major}.{minor}.0+e0.{major}.{minor}")
-            aliases.add(f"0.{major}.{minor}.0")
+            aliases.add(f"{major}.{minor}.0+e{major}.{minor}")
+            aliases.add(f"{major}.{minor}.0")
     else:
         base = text.split("+", 1)[0]
         aliases.add(base)
