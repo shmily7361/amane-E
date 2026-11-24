@@ -84,7 +84,7 @@ test: fixtures
 test-cov: fixtures
     uv run pytest tests/ -n logical --dist worksteal --durations=20 --cov=amane --cov-report=term-missing --cov-report=html:coverage_html --cov-report=xml:coverage.xml
 
-check: lint typecheck check-web test-cov
+check: check-version lint typecheck check-web test-cov
 
 # Fail if OpenAPI / generated client drifted from source
 _check-openapi: generate
@@ -197,6 +197,16 @@ bump kind:
 # Preview next version / commit / tag (no writes)
 bump-dry kind:
     uv run python scripts/bump_version.py precheck {{ kind }} --dry-run
+
+# Bump fork display version (E<major>.<minor>), local commit + tag, no push
+bump-fork target:
+    uv run python scripts/bump_fork_version.py {{ target }}
+
+bump-fork-dry target:
+    uv run python scripts/bump_fork_version.py {{ target }} --dry-run
+
+check-version:
+    uv run python scripts/check_version_consistency.py
 
 # Strip magic trailing commas (imports + ≤3-arg defs/calls), then ruff format
 strip-commas *args:

@@ -17,9 +17,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CHANGELOG = ROOT / "CHANGELOG.md"
 
-# ``## v0.5.0`` / ``## [0.5.0] - 2026-08-27`` / ``## 0.5.0``
+# ``## v0.5.0`` / ``## [0.5.0] - 2026-08-27`` / ``## 0.5.0`` / ``## E0.29``
 _H2 = re.compile(r"^##[ \t]+(\S.*?)\s*$")
-_VERSION_TITLE = re.compile(r"^\[?v?(\d+\.\d+\.\d+)\]?(?:\s+.*)?$", re.IGNORECASE)
+_VERSION_TITLE = re.compile(
+    r"^\[?v?(?P<version>E\d+\.\d+(?:\.\d+)?|\d+\.\d+\.\d+(?:\+[0-9A-Za-z.-]+)?)\]?(?:\s+.*)?$",
+    re.IGNORECASE,
+)
 
 
 class ChangelogError(Exception):
@@ -37,7 +40,26 @@ def heading_version(title: str) -> str | None:
     match = _VERSION_TITLE.match(title.strip())
     if match is None:
         return None
-    return match.group(1)
+    return match.group("version")
+
+
+def version_aliases(raw: str) -> frozenset[str]:
+    """E 前缀展示名与 PEP 440 本地段互为别名, 便于同一个 changelog 节被两种调用命中."""
+    text = normalize_version(raw)
+    aliases = {text}
+    if text.upper().startswith("E"):
+        parts = text[1:].split(".")
+        if len(parts) >= 2:
+            major, minor = parts[0], parts[1]
+            aliases.add(f"0.{major}.{minor}.0+e0.{major}.{minor}")
+            aliases.add(f"0.{major}.{minor}.0")
+    else:
+        base = text.split("+", 1)[0]
+        aliases.add(base)
+        parts = base.split(".")
+        if len(parts) >= 2:
+            aliases.add(f"E{parts[0]}.{parts[1]}")
+    return frozenset(aliases)
 
 
 def split_h2_sections(text: str) -> list[tuple[str, str]]:
@@ -69,8 +91,10 @@ def extract_section(text: str, version: str) -> str:
     want = normalize_version(version)
     if not want:
         raise ChangelogError("版本号为空")
+    aliases = version_aliases(want)
     for title, section in split_h2_sections(text):
-        if heading_version(title) != want:
+        found = heading_version(title)
+        if found is None or not ({found} & aliases):
             continue
         stripped = section.strip()
         rest = stripped.split("\n", 1)

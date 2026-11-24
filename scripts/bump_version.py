@@ -28,6 +28,7 @@ BUMP_CHOICES: tuple[BumpKind, ...] = ("major", "minor", "patch")
 # 整段 bump 管线结束后只允许这些相对路径出现在 git 变更里; 以 ``/`` 结尾的是目录前缀.
 ALLOWED_PATHS: frozenset[str] = frozenset(
     {
+        "AGENTS.md",
         "CHANGELOG.md",
         "pyproject.toml",
         "uv.lock",
