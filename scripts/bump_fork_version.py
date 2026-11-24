@@ -20,7 +20,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from bump_version import (
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.bump_version import (  # noqa: E402
     ALLOWED_PATHS,
     PREBUMP_ALLOWED_PATHS,
     BumpError,
@@ -30,9 +34,8 @@ from bump_version import (
     git_changed_paths,
     tag_exists,
 )
-from check_version_consistency import collect, pyproject_version
+from scripts.check_version_consistency import collect, pyproject_version  # noqa: E402
 
-ROOT = Path(__file__).resolve().parents[1]
 _TARGET = re.compile(r"^E(?P<major>\d+)\.(?P<minor>\d+)$")
 
 
