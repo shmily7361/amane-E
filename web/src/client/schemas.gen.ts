@@ -3144,7 +3144,8 @@ export const HotSettingsSchema = {
                 download_resources: [
                     'thumb',
                     'poster',
-                    'extrafanart'
+                    'extrafanart',
+                    'trailer'
                 ],
                 crop_poster: true,
                 poster_ratio: 0.7,

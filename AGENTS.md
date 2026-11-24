@@ -104,6 +104,18 @@ just bump patch|minor|major  # 发版: 升版本 + generate + 提交 + tag (不 
 just bump-dry patch          # 预览下一版本
 ```
 
+自定义分支的版本号约定: 对外称 `E0.29`, `pyproject.toml` 里写 PEP 440 形式 `0.29.0+e0.29`
+(hatchling / uv 不接受 `E0.29` 这类非法版本, 直接写会让 `uv sync` 与 Docker 构建失败).
+本地版本段只影响排序与展示, `0.29.0+e0.29` 高于官方 `0.29.0`, 低于 `0.29.1`, 更新检查不会误判.
+`just bump` 面向官方语义化发版, 不识别 `E` 前缀的 changelog 标题, 自定义分支按下面三步手工发版:
+
+```bash
+# 1. 改版本: pyproject.toml 的 [project].version 与 uv.lock 里 [[package]] name = "amane" 的 version
+# 2. 重新生成契约与客户端 (版本会写进 openapi info.version)
+python scripts/export_openapi.py && (cd web && pnpm gen-client)
+# 3. CHANGELOG.md 顶部加一节, 例如 "## E0.29"; 然后 git commit -m "release: E0.29"
+```
+
 等价的具体命令 (排障或 just 不可用时直接使用):
 
 ```bash

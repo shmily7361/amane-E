@@ -175,7 +175,7 @@ class OrganizePayload(LibraryBase):
     )
     dedupe_key: int | None = Field(
         default=None,
-        description="增量写回去重键; 同键已有 queued/running 任务时复用, 手动提交不带此键",
+        description="内部字段: 增量写回去重键, 同键已有 queued 任务时复用. 由服务端生成, 客户端不可设置",
     )
 
     async def resolve(self, repo: Repository) -> None:

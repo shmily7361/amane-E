@@ -4,6 +4,7 @@ from typing import Annotated, Literal, Self
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, TypeAdapter, field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from ...db import MediaFile, Repository, TaskStatus, TaskType
 from ...db.embeddings import EmbeddingKind
@@ -233,8 +234,9 @@ class RefreshSubmission(RefreshPayload):
 
 class OrganizeSubmission(OrganizePayload):
     type: Literal["organize"]
+    # 去重键只由服务端生成: 从提交 schema 隐去, 前端表单/客户端类型都不出现; 传入非 None 直接 422.
+    dedupe_key: SkipJsonSchema[int | None] = Field(default=None, description="内部字段; 由服务端生成, 客户端不可设置")
 
-    # 不收窄继承字段类型 (int | None), 否则 ty 会报 mutable override; 用校验器拒绝客户端传值.
     @field_validator("dedupe_key", mode="before")
     @classmethod
     def _reject_client_dedupe_key(cls, value: object) -> None:
