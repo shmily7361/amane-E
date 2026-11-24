@@ -107,6 +107,8 @@ class TestScrapeHandler:
         """指定番号刮削成功后按文件名记住番号, 非显式刮削不留映射."""
         explicit = await repo.create_media_file(library_id=1, path="/inbox/UNKNOWN-1.mp4")
         implicit = await repo.create_media_file(library_id=1, path="/inbox/UNKNOWN-2.mp4")
+        assert explicit.id is not None
+        assert implicit.id is not None
 
         result = await handler.handle(
             ScrapePayload(

@@ -485,7 +485,11 @@ _THRESHOLD = 512 * 1024  # NetworkConfig 的分块阈值下界
 
 
 def _network_client(
-    monkeypatch: pytest.MonkeyPatch, session: _RangeStubSession, *, threshold: int = _THRESHOLD, max_retries: int = 2
+    monkeypatch: pytest.MonkeyPatch,
+    session: _RangeStubSession | _BadRangeStubSession,
+    *,
+    threshold: int = _THRESHOLD,
+    max_retries: int = 2,
 ) -> WebClient:
     """按热配置经网络栈构造客户端: 分块参数的取值与接线在同一处断言."""
     hot = HotSettings()
