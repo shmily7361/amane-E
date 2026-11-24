@@ -34,9 +34,11 @@ class FakeClient:
         self.fail = fail or set()
         self.orientations = orientations or {}
         self.downloaded: list[str] = []
+        self.max_bytes: dict[str, int | None] = {}
 
     async def download(self, url: str, dest: Path, **kwargs) -> bool:
         self.downloaded.append(url)
+        self.max_bytes[url] = kwargs.get("max_bytes")
         if url in self.fail:
             return False
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -191,6 +193,27 @@ async def test_trailer_downloaded_external_url(resource_store: ResourceStore, tm
     )
     assert out.trailer_urls == ["https://s/trailer.mp4"]
     assert "https://s/trailer.mp4" in client.downloaded  # 已下载到本地
+
+
+@pytest.mark.asyncio
+async def test_trailer_download_passes_size_limit(resource_store: ResourceStore, tmp_path: Path):
+    client = FakeClient({})
+    settings = HotSettings()
+    settings.scraping.download_resources.append(DownloadableResource.trailer)
+    settings.scraping.trailer_max_bytes = 1024
+
+    await materialize_images(
+        [],
+        [],
+        ["https://s/trailer.mp4"],
+        resource_store,
+        cast("WebClient", client),
+        settings,
+        tmp_path,
+        content_type=ContentType.CENSORED,
+    )
+
+    assert client.max_bytes["https://s/trailer.mp4"] == 1024
 
 
 @pytest.mark.asyncio

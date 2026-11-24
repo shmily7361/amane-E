@@ -233,6 +233,12 @@ class TestScrapingDownloadResources:
         assert "skip_existing" not in type(cfg).model_fields
         assert "write_nfo" not in type(cfg).model_fields
 
+    def test_trailer_max_bytes_boundary(self):
+        assert ScrapingConfig().trailer_max_bytes == 512 * 1024 * 1024
+        assert ScrapingConfig.model_validate({"trailer_max_bytes": 0}).trailer_max_bytes == 0
+        with pytest.raises(ValueError):
+            ScrapingConfig.model_validate({"trailer_max_bytes": -1})
+
 
 class TestDebugCaptureMigration:
     def test_scraping_debug_capture_moves_to_logging(self):

@@ -3147,6 +3147,7 @@ export const HotSettingsSchema = {
                     'extrafanart',
                     'trailer'
                 ],
+                trailer_max_bytes: 536870912,
                 crop_poster: true,
                 poster_ratio: 0.7,
                 poster_crop_skip_ratio: 0.9,
@@ -8579,6 +8580,13 @@ export const ScrapingConfigSchema = {
             type: 'array',
             title: 'Download Resources',
             description: '刮削时自动下载到 Resource 目录的资源类型'
+        },
+        trailer_max_bytes: {
+            type: 'integer',
+            minimum: 0,
+            title: 'Trailer Max Bytes',
+            description: '预告片下载体积上限 (字节); 0 表示不限. 超限不写 Resource, 刮削不失败',
+            default: 536870912
         },
         crop_poster: {
             type: 'boolean',

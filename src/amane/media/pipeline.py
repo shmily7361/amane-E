@@ -3,7 +3,7 @@
 与整理到媒体库路径无关. 任一步失败不抛, 仅降级.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -43,6 +43,7 @@ class MaterializedImages:
     poster_urls: list[str]
     thumb_urls: list[str]
     trailer_urls: list[str]
+    kinds: list[str] = field(default_factory=list)
 
 
 def _internal_url(store: ResourceStore, locator_url: str) -> str:
@@ -54,10 +55,12 @@ def _winner_first(urls: list[str], winner: str | None) -> list[str]:
     return ([winner] if winner else []) + [u for u in urls if u != winner]
 
 
-async def _acquire_first(urls: list[str], store: ResourceStore, client: WebClient) -> tuple[str | None, Path | None]:
+async def _acquire_first(
+    urls: list[str], store: ResourceStore, client: WebClient, *, max_bytes: int | None = None
+) -> tuple[str | None, Path | None]:
     """按序尝试候选, 命中即停. 候选是同一张图的回退链, 逐个下载只会把它在 Resource 里存成多份."""
     for url in urls:
-        local = await store.acquire(url, client)
+        local = await store.acquire(url, client, max_bytes=max_bytes)
         if local:
             return url, local
     return None, None
@@ -167,10 +170,13 @@ async def materialize_images(
                 if res:
                     await _maybe_upscale(store, res, config, data_dir)
 
-    # 下载预告片.
+    # 下载预告片; 上限由配置控制, 超限视为本次未取到, 不写 Resource 也不影响其它字段.
     trailer_winner: str | None = None
     if DownloadableResource.trailer in kinds:
-        trailer_winner, _ = await _acquire_first(trailer_urls, store, client)
+        limit = config.scraping.trailer_max_bytes or None
+        trailer_winner, _ = await _acquire_first(trailer_urls, store, client, max_bytes=limit)
+        if trailer_urls and trailer_winner is None:
+            logger.warning("trailer download failed or exceeded limit", urls=trailer_urls, max_bytes=limit)
 
     # 下载剧照: 按站点优先级, 有结果即停.
     if DownloadableResource.extrafanart in kinds and extrafanart_urls:
@@ -181,6 +187,7 @@ async def materialize_images(
         poster_urls=result_poster_urls,
         thumb_urls=_winner_first(thumb_urls, thumb_winner),
         trailer_urls=_winner_first(trailer_urls, trailer_winner),
+        kinds=sorted(kind.value for kind in kinds),
     )
     logger.debug(
         "images materialized",

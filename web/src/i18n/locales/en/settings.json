@@ -51,6 +51,10 @@
           }
         }
       },
+      "trailer_max_bytes": {
+        "label": "Trailer size limit",
+        "description": "Maximum trailer size in bytes during scraping; 0 disables the limit. Oversized trailers are skipped without failing the scrape"
+      },
       "crop_poster": {
         "label": "Crop Poster",
         "description": "Auto-crop a poster from the cover image, censored and uncensored only"

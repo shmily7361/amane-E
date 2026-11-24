@@ -159,12 +159,19 @@ class ScrapeHandler(TaskHandler[ScrapePayload, ScrapeResult]):
         poster_out = result.metadata.poster_urls
         thumb_out = result.metadata.thumb_urls
         trailer_out = result.metadata.trailer_urls
+        materialized_kinds: list[str] = []
         if self._web_client is not None:
             try:
-                # 刮削期缓存所有库在整理时需要的类型: 否则 ORGANIZE 首次落盘必然联网补下.
+                # 有文件时只并该文件的库: 别的库勾选 trailer 不应放大本次刮削的带宽与磁盘.
                 download_kinds = set[DownloadableResource](self._config.scraping.download_resources)
-                for library in await self._repo.list_libraries():
-                    download_kinds.update(library.copy_resources)
+                libraries = (
+                    [await self._repo.get_library(file.library_id)]
+                    if file is not None
+                    else await self._repo.list_libraries()
+                )
+                for library in libraries:
+                    if library is not None:
+                        download_kinds.update(library.copy_resources)
                 materialized = await materialize_images(
                     result.metadata.poster_urls,
                     result.metadata.thumb_urls,
@@ -180,6 +187,7 @@ class ScrapeHandler(TaskHandler[ScrapePayload, ScrapeResult]):
                 poster_out = materialized.poster_urls
                 thumb_out = materialized.thumb_urls
                 trailer_out = materialized.trailer_urls
+                materialized_kinds = materialized.kinds
             except Exception:
                 current().warning("image materialization failed, keeping raw urls", number=payload.number)
 
@@ -242,6 +250,7 @@ class ScrapeHandler(TaskHandler[ScrapePayload, ScrapeResult]):
             sites_used=len(set(result.field_sources.values())),
             fields_resolved=len(result.field_sources),
             failed_sites=result.failed_sites,
+            materialized_kinds=materialized_kinds,
             actor_followups=len(actor_followups),
             organize_followups=len(organize_followups),
         )

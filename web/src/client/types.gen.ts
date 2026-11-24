@@ -4463,6 +4463,12 @@ export type ScrapingConfig = {
      */
     download_resources?: Array<DownloadableResource>;
     /**
+     * Trailer Max Bytes
+     *
+     * 预告片下载体积上限 (字节); 0 表示不限. 超限不写 Resource, 刮削不失败
+     */
+    trailer_max_bytes?: number;
+    /**
      * Crop Poster
      */
     crop_poster?: boolean;

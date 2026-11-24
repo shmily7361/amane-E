@@ -380,6 +380,11 @@ class ScrapingConfig(BaseModel):
         default_factory=lambda: list(DownloadableResource),
         description="刮削时自动下载到 Resource 目录的资源类型",
     )
+    trailer_max_bytes: int = Field(
+        default=512 * 1024 * 1024,
+        ge=0,
+        description="预告片下载体积上限 (字节); 0 表示不限. 超限不写 Resource, 刮削不失败",
+    )
     crop_poster: bool = True
     """仅有码与无码从封面自动裁切生成海报."""
 
