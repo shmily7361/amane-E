@@ -221,7 +221,8 @@ class ScrapeHandler(TaskHandler[ScrapePayload, ScrapeResult]):
         if payload.number_explicit and file is not None:
             try:
                 # 当前文件也按用户确认的番号回写, 列表/筛选不再显示解析失败时的旧番号.
-                await self._repo.update_media_file(payload.media_file_id, number=payload.number)
+                if file.id is not None:
+                    await self._repo.update_media_file(file.id, number=payload.number)
                 await self._repo.upsert_name_mapping(file.path, payload.number)
             except Exception:
                 current().warning(
