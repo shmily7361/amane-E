@@ -14,6 +14,25 @@
 
 技术栈: FastAPI · React + Mantine · SQLite (SQLModel + Alembic) · Docker · PyInstaller + 原生桌面 APP (swift / .NET AOT) · Android 壳 (Kotlin WebView)
 
+## 目录结构与核心架构约定
+
+| 路径 | 职责与边界 |
+|------|-----------|
+| `src/amane/api/` | FastAPI 路由、请求/响应模型、依赖注入、`support/`。只做 HTTP 适配，不承载业务逻辑。 |
+| `src/amane/handlers/` | 任务 payload 与 handler。SCRAPE / ORGANIZE / REFRESH / CLEANUP 等领域逻辑在此；不抛 `HTTPException`。 |
+| `src/amane/agent/` | 工具定义、能力注册、会话与服务。依赖通过 `AgentDeps` 注入，不依赖 API 层。 |
+| `src/amane/db/` | `models.py` / `repos/` / `migrations/`。迁移只由 Alembic 生成；写锁、批量提交等约束在 repo 层。 |
+| `src/amane/organize/` | 路径模板、视频与字幕落盘、附属资源搬迁。`parse_file_info` 只做文件名解析，不访问 DB。 |
+| `src/amane/library/` | 媒体库扫描、清理清单、删除与剪枝。清理判定与执行复验必须同口径。 |
+| `src/amane/media/` `parsing/` `crawlers/` | 资源物化、番号/文件信息解析、站点爬虫。爬虫不改数据库。 |
+| `src/amane/scheduler/` `events.py` `observability/` | worker、cron、watcher、事件总线与日志转发。跨模块通知走 EventBus 或结构化日志。 |
+| `web/src/` | React 前端。`client/` 由 OpenAPI 生成，禁止手改；路由在 `routes/`，组件在 `components/`。 |
+| `tests/` | 测试镜像源码结构。共享 fixture 在 `conftest.py`，迁移模板在 `schema_template.py`。 |
+
+核心约定: **Metadata 是一等公民**，不以本地文件存在为前提；`MediaFile` 是磁盘文件索引。任务通过 payload/handler 执行，链内后继在父任务完成事务中创建。API 与 Agent 都通过 handlers 调用领域逻辑，不得反向依赖 `api.*`。
+
+本分支额外约定: 保留 `handlers/enqueue.py` 的领域层入队与 `pending_writebacks` 失败补偿、`organize/sidecars.py` 的旧资源搬迁与 `.bif` 随行、`db/models.py::NameMapping` 的文件名→番号映射。重构时不得回退这些机制。
+
 ## Issue 与 Pull Request
 
 外部贡献必须遵守 [`AI_POLICY.md`](AI_POLICY.md). PR 须经人工 review, 并按该政策披露 AI 使用程度.
@@ -85,6 +104,30 @@ just bump patch|minor|major  # 发版: 升版本 + generate + 提交 + tag (不 
 just bump-dry patch          # 预览下一版本
 ```
 
+等价的具体命令 (排障或 just 不可用时直接使用):
+
+```bash
+# 后端
+uv run pytest -q
+uv run pytest tests/<模块>/test_<文件>.py -q
+uv run ruff check .
+uv run ruff format --check .
+uv run ruff check --fix . && uv run ruff format .
+uv run ty check
+uv run alembic heads
+uv run alembic upgrade head
+
+# 前端 (在 web/)
+cd web
+pnpm gen-client          # 按 web/openapi.json 生成 src/client
+pnpm check               # oxlint + oxfmt --check + tsc -b --noEmit + i18n:ci
+pnpm build               # tsc -b && vite build
+
+# 全量
+just check               # lint + format + typecheck + web check + test
+just build               # 导出 OpenAPI + 构建前端
+```
+
 formatter/linter 不通过时优先使用 `just fix` 自动修复, 不要手动改
 发版前更新 `CHANGELOG.md`, 只用 `just bump`, 不要手改版本或手打 tag; Android APP 的版本与 tag 独立, 见 [android.md](docs/dev/android.md)
 
@@ -115,3 +158,18 @@ formatter/linter 不通过时优先使用 `just fix` 自动修复, 不要手动�
 - **复用fixture**. 创建 fixture 前先检查是否已有
 - **禁止玩具测试**. 禁止为提高覆盖率而创建无意义的测试, 必须测试实际逻辑. 详见 `docs/dev/testing.md`
 - **必须包含边界/非法用例**. 不能只包含合法输入用例, 必须充分测试非法输入下的健壮性, 以及报错异常信息的明确性
+
+## 提交与 PR 前必查
+
+按顺序确认，缺项不得提交或开 PR:
+
+1. **分支与范围**: `git status --short --branch` 确认在目标分支、无意外文件；`git diff --check` 无空白错误。每个提交只含一个逻辑变更。
+2. **测试**: 改动模块的目标测试通过；全量 `uv run pytest -q` 的失败集合与当前环境基线一致，不得新增 error。当前基线失败均为 Windows symlink 权限、camoufox 缺失与 image token 环境问题。
+3. **后端质量**: `uv run ruff check .`、`uv run ruff format --check .`、`uv run ty check`。ty 只允许既有的可选浏览器依赖 `unresolved-import`。
+4. **前端质量**: 在 `web/` 跑 `pnpm check` 与 `pnpm build`；有 lint warning 须确认不是本次引入。
+5. **生成物**: API schema 变更必须 `just generate` / `pnpm gen-client`，提交 `web/openapi.json` 与 `web/src/client/` 的同步改动；不得手改生成文件。
+6. **数据库**: 新增/修改表结构必须通过 Alembic revision；检查 `uv run alembic heads` 单 head，迁移含 upgrade/downgrade 测试。本分支 head 应能串到 `2f7b9a4c1d3e`。
+7. **文档**: 行为、架构或命令变化同步更新 `docs/dev/` / `docs/user/` 与本文档；措辞遵守 `docs/dev/writing.md` 和 `docs/dev/terms.md`。
+8. **回归风险**: 确认未回退本分支本地优化（增量写盘补偿、附属资源搬迁与 `.bif`、文件名→番号映射），未把临时日志、调试代码、密钥或生成缓存纳入提交。
+9. **远程操作**: push、开 PR、合并、回复 Issue 等必须经用户明确批准；本分支默认只本地提交，不推送。
+10. **PR 描述**: 说明改动动机、验证命令与结果、已知限制；按 `AI_POLICY.md` 披露 AI 使用程度，PR 必须经人工 review。
