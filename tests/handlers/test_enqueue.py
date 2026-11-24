@@ -1,11 +1,14 @@
 """增量写盘入队: 失败可见 + 持久待重试 + 成功后清除."""
 
+from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 
 from amane.db.models import TaskType
+from amane.db.repo_types import PENDING_WRITEBACK_MAX_ATTEMPTS
+from amane.db.repos import metadata as metadata_repo_module
 from amane.handlers import enqueue as enqueue_module
 from amane.handlers.enqueue import enqueue_incremental_organize, retry_pending_writebacks
 
@@ -18,9 +21,21 @@ class _WarningRecorder:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, object]]] = []
+        self.infos: list[tuple[str, dict[str, object]]] = []
+        self.debugs: list[tuple[str, dict[str, object]]] = []
+        self.errors: list[tuple[str, dict[str, object]]] = []
 
     def warning(self, event: str, **kwargs: object) -> None:
         self.calls.append((event, kwargs))
+
+    def info(self, event: str, **kwargs: object) -> None:
+        self.infos.append((event, kwargs))
+
+    def debug(self, event: str, **kwargs: object) -> None:
+        self.debugs.append((event, kwargs))
+
+    def error(self, event: str, **kwargs: object) -> None:
+        self.errors.append((event, kwargs))
 
 
 async def _seed(repo: Repository, tmp_path: Path) -> tuple[int, int]:
@@ -85,3 +100,51 @@ async def test_metadata_without_files_clears_pending_marker(repo: Repository) ->
 
     assert await enqueue_incremental_organize(repo, [meta.id]) == []
     assert await repo.list_pending_writeback_metadata_ids() == []
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_retry_backoff_and_dead_letter(repo: Repository, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """重试按次数退避, 未到期不进批次; 达到上限后落死信并停止自动重试."""
+    metadata_id, _media_id = await _seed(repo, tmp_path)
+    recorder = _WarningRecorder()
+    real_now = metadata_repo_module._utcnow
+    clock = {"now": real_now()}
+
+    async def _boom(*_args: object, **_kwargs: object) -> list[object]:
+        raise RuntimeError("still down")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(enqueue_module, "logger", recorder)
+        patch.setattr(metadata_repo_module, "_utcnow", lambda: clock["now"])
+        patch.setattr(repo, "list_media_files", _boom)
+
+        await enqueue_incremental_organize(repo, [metadata_id])
+        row = await repo.get_pending_writeback(metadata_id)
+        assert row is not None and row.attempts == 1
+        assert row.next_attempt_at is not None and row.next_attempt_at <= clock["now"]
+
+        await retry_pending_writebacks(repo)
+        row = await repo.get_pending_writeback(metadata_id)
+        assert row is not None and row.attempts == 2
+        assert row.next_attempt_at is not None and row.next_attempt_at > clock["now"]
+        first_delay = row.next_attempt_at
+        assert await repo.list_pending_writeback_metadata_ids() == []
+
+        for _ in range(PENDING_WRITEBACK_MAX_ATTEMPTS - 2):
+            clock["now"] = first_delay + timedelta(seconds=1)
+            await retry_pending_writebacks(repo)
+            row = await repo.get_pending_writeback(metadata_id)
+            assert row is not None
+            if row.next_attempt_at is not None:
+                first_delay = row.next_attempt_at
+
+    assert row is not None and row.attempts == PENDING_WRITEBACK_MAX_ATTEMPTS
+    assert row.next_attempt_at is None
+    assert await repo.list_pending_writeback_metadata_ids() == []
+    warnings = [
+        call
+        for call in recorder.calls
+        if call[0] == "incremental organize enqueue failed; pending writeback registered"
+    ]
+    assert len(warnings) == 1
+    assert any(event == "pending writeback dead letter" for event, _kwargs in recorder.errors)

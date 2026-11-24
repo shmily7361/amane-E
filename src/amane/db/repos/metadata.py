@@ -33,6 +33,7 @@ from ..models import (
     metadata_vr_predicate,
 )
 from ..repo_types import (
+    PENDING_WRITEBACK_MAX_ATTEMPTS,
     MetadataFields,
     WriteMode,
     _metadata_has_files_clause,
@@ -40,6 +41,7 @@ from ..repo_types import (
     _metadata_primary_order,
     _metadata_uncensored_predicate,
     _utcnow,
+    pending_writeback_delay,
 )
 from .base import RepositoryMixinBase, acquire_write_lock, chunks
 from .facet_helpers import (
@@ -649,26 +651,63 @@ class MetadataRepoMixin(RepositoryMixinBase):
         await self._drop_embeddings(removed)
         return len(removed), missing
 
-    async def mark_metadata_pending_writeback(self, metadata_ids: Sequence[int]) -> None:
-        """登记增量写盘入队失败的条目; 已存在时保留首次失败时间, 供 cron 按 FIFO 重试."""
+    async def mark_metadata_pending_writeback(
+        self, metadata_ids: Sequence[int], *, error: str | None = None, retry: bool = False
+    ) -> dict[int, int]:
+        """登记增量写盘入队失败; 返回各条目的失败次数.
+
+        ``retry`` 为真时累加次数并按退避安排下次重试, 到达上限后 ``next_attempt_at`` 置空成为死信.
+        用户新的编辑失败是新的补偿周期, 不累加既有次数.
+        """
         ids = unique_ids(metadata_ids)
         if not ids:
-            return
+            return {}
         now = _utcnow()
+        attempts_by_id: dict[int, int] = {}
         async with self._session() as session:
             await acquire_write_lock(session)
             for chunk in chunks(ids):
-                existing = set(
-                    (
-                        await session.exec(
-                            select(PendingWriteback.metadata_id).where(col(PendingWriteback.metadata_id).in_(chunk))
-                        )
-                    ).all()
-                )
+                rows = (
+                    await session.exec(select(PendingWriteback).where(col(PendingWriteback.metadata_id).in_(chunk)))
+                ).all()
+                existing = {row.metadata_id: row for row in rows}
                 for metadata_id in chunk:
-                    if metadata_id not in existing:
-                        session.add(PendingWriteback(metadata_id=metadata_id, created_at=now))
+                    row = existing.get(metadata_id)
+                    if row is None:
+                        attempts = 1
+                        row = PendingWriteback(
+                            metadata_id=metadata_id,
+                            created_at=now,
+                            attempts=attempts,
+                            next_attempt_at=now,
+                            last_error=error,
+                        )
+                        session.add(row)
+                    elif retry:
+                        attempts = min(row.attempts + 1, PENDING_WRITEBACK_MAX_ATTEMPTS)
+                        row.attempts = attempts
+                        row.last_error = error
+                        row.next_attempt_at = (
+                            None
+                            if attempts >= PENDING_WRITEBACK_MAX_ATTEMPTS
+                            else now + pending_writeback_delay(attempts)
+                        )
+                        session.add(row)
+                    else:
+                        attempts = 1
+                        row.attempts = attempts
+                        row.created_at = now
+                        row.last_error = error
+                        row.next_attempt_at = now
+                        session.add(row)
+                    attempts_by_id[metadata_id] = attempts
             await session.commit()
+        return attempts_by_id
+
+    async def get_pending_writeback(self, metadata_id: int) -> PendingWriteback | None:
+        """读取单条补偿状态; 供诊断与测试断言退避/死信, 不进入 API 契约."""
+        async with self._session() as session:
+            return await session.get(PendingWriteback, metadata_id)
 
     async def clear_metadata_pending_writeback(self, metadata_ids: Sequence[int]) -> None:
         """重试入队成功后清除待补偿条目."""
@@ -682,11 +721,12 @@ class MetadataRepoMixin(RepositoryMixinBase):
             await session.commit()
 
     async def list_pending_writeback_metadata_ids(self, *, limit: int = 100) -> list[int]:
-        """按首次失败时间返回待重试的 metadata id."""
+        """返回已到期的待重试条目; 未到期与死信不进入批次."""
         async with self._session() as session:
             stmt = (
                 select(PendingWriteback.metadata_id)
-                .order_by(col(PendingWriteback.created_at).asc(), col(PendingWriteback.metadata_id).asc())
+                .where(col(PendingWriteback.next_attempt_at) <= _utcnow())
+                .order_by(col(PendingWriteback.next_attempt_at).asc(), col(PendingWriteback.metadata_id).asc())
                 .limit(limit)
             )
             return list((await session.exec(stmt)).all())

@@ -20,6 +20,8 @@ logger = structlog.get_logger()
 
 _CHECK_INTERVAL = 60.0
 _SHUTDOWN_TICK_TIMEOUT = 10.0
+_CRON_RETRY_LIMIT = 20
+"""每 tick 最多重投 20 条待写盘; 放在用户 Schedule 之后, 慢 DB 不推迟已到点的任务."""
 
 
 class CronScheduler:
@@ -61,8 +63,6 @@ class CronScheduler:
     async def _tick(self) -> None:
         self._tick_done.clear()
         try:
-            # 与用户 Schedule 正交: 入队失败登记的增量写盘每分钟自愈, 不需要用户新建定时任务.
-            await retry_pending_writebacks(self._repo)
             now = datetime.now(UTC)
             schedules = await self._repo.list_schedules()
 
@@ -91,6 +91,9 @@ class CronScheduler:
 
                 new_next_run = croniter(schedule.cron, now).get_next(datetime)
                 await self._repo.update_schedule(schedule.id, last_run=now, next_run=new_next_run)
+
+            # 入队失败的增量写盘每分钟自愈, 但放在用户 Schedule 之后, 避免重投拖慢到点任务.
+            await retry_pending_writebacks(self._repo, limit=_CRON_RETRY_LIMIT)
         finally:
             self._tick_done.set()
 

@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypedDict
 
@@ -32,6 +32,19 @@ if TYPE_CHECKING:
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+PENDING_WRITEBACK_MAX_ATTEMPTS = 10
+"""增量写盘补偿的重试上限; 达到上限后留在表里当死信, 不再自动重试."""
+
+_PENDING_WRITEBACK_MAX_DELAY = timedelta(hours=6)
+
+
+def pending_writeback_delay(attempts: int) -> timedelta:
+    """第 N 次失败后的退避: 1m, 2m, 4m ... 上限 6h."""
+    if attempts < 1:
+        return timedelta(0)
+    return min(timedelta(seconds=2 ** (attempts - 1) * 60), _PENDING_WRITEBACK_MAX_DELAY)
 
 
 # 显式枚举 → Column. 禁止 getattr 反射: 类型检查须能验证列存在;

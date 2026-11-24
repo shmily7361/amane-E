@@ -81,3 +81,31 @@ async def test_stop_waits_for_in_flight_tick(repo: Repository) -> None:
     scheduler._tick_done.set()
     await asyncio.wait_for(stopping, 1)
     assert stopping.done()
+
+
+@pytest.mark.asyncio
+async def test_retry_runs_after_due_schedules(repo: Repository, monkeypatch: pytest.MonkeyPatch) -> None:
+    """重投放在用户 Schedule 之后, 慢 DB 不推迟已经到点的任务."""
+    await repo.create_schedule(
+        cron="0 3 * * *",
+        task_type=RoutineType.SEMANTIC_INDEX,
+        payload={"type": "semantic_index"},
+        next_run=datetime.now(UTC) - timedelta(minutes=1),
+    )
+    events: list[str] = []
+    scheduler = CronScheduler(repo)
+
+    async def _schedule(*_args: object) -> None:
+        events.append("schedule")
+
+    async def _retry(_repo: Repository, *, limit: int) -> list[int]:
+        events.append("retry")
+        await asyncio.sleep(0)
+        return []
+
+    monkeypatch.setattr(scheduler, "_execute_task", _schedule)
+    monkeypatch.setattr("amane.scheduler.cron.retry_pending_writebacks", _retry)
+
+    await scheduler._tick()
+
+    assert events == ["schedule", "retry"]

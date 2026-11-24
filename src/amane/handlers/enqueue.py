@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from ..db.models import TaskType
+from ..db.repo_types import PENDING_WRITEBACK_MAX_ATTEMPTS
 from .models import OrganizePayload, organize_dedupe_key
 
 if TYPE_CHECKING:
@@ -24,17 +25,21 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 _RETRY_BATCH_SIZE = 100
+_RETRY_LOG_ATTEMPTS = frozenset({2, 5, 10})
+"""重试失败时的汇总 INFO 节点; 其余重试只写 DEBUG, 避免 /logs 刷屏."""
 
 
 class IncrementalOrganizeError(RuntimeError):
     """内部入队校验失败; 不泄漏 FastAPI HTTPException 到 agent / scheduler."""
 
 
-async def enqueue_incremental_organize(repo: Repository, metadata_ids: Sequence[int]) -> list[int]:
+async def enqueue_incremental_organize(
+    repo: Repository, metadata_ids: Sequence[int], *, retry_failure: bool = False
+) -> list[int]:
     """为编辑过的条目入队只写对应文件的 ORGANIZE, 返回任务 id.
 
-    成功入队 (或无关联文件无需落盘) 的条目清除待补偿标记; 失败的条目写入 ``pending_writebacks``,
-    并输出带 ``metadata_ids`` 的 WARNING 日志供 UI 展示, 由 cron 每分钟重试.
+    成功入队 (或无关联文件无需落盘) 的条目清除待补偿标记; 失败的条目写入 ``pending_writebacks``.
+    `retry_failure` 为真表示这是 cron 重投, 失败次数累加并走退避/死信日志分级.
     """
     ids = list(dict.fromkeys(metadata_id for metadata_id in metadata_ids if metadata_id is not None))
     if not ids:
@@ -43,7 +48,7 @@ async def enqueue_incremental_organize(repo: Repository, metadata_ids: Sequence[
     try:
         files = await repo.list_media_files(metadata_ids=ids, limit=None)
     except Exception as exc:
-        await _register_failure(repo, ids, exc)
+        await _register_failure(repo, ids, exc, retry=retry_failure)
         return []
 
     groups: dict[int, list[int]] = defaultdict(list)
@@ -97,6 +102,7 @@ async def enqueue_incremental_organize(repo: Repository, metadata_ids: Sequence[
             repo,
             sorted(failed),
             RuntimeError("; ".join(failures) or "incremental organize enqueue failed"),
+            retry=retry_failure,
         )
     return task_ids
 
@@ -110,20 +116,51 @@ async def retry_pending_writebacks(repo: Repository, *, limit: int = _RETRY_BATC
         return []
     if not ids:
         return []
-    return await enqueue_incremental_organize(repo, ids)
+    return await enqueue_incremental_organize(repo, ids, retry_failure=True)
 
 
-async def _register_failure(repo: Repository, metadata_ids: Sequence[int], exc: Exception) -> None:
+async def _register_failure(
+    repo: Repository, metadata_ids: Sequence[int], exc: Exception, *, retry: bool = False
+) -> None:
     ids = sorted(set(metadata_ids))
-    # 结构化字段会被 WSEventLogHandler 原样带进 EventType.LOG.data, 前端 /logs 可直接看到影响范围.
-    logger.warning(
-        "incremental organize enqueue failed; pending writeback registered",
-        metadata_ids=ids,
-        error=str(exc),
-        exc_info=True,
-    )
+    error = str(exc)
     try:
-        await repo.mark_metadata_pending_writeback(ids)
+        attempts = await repo.mark_metadata_pending_writeback(ids, error=error, retry=retry)
     except Exception:
         # DB 已不可写时无法登记补偿; 至少 WARNING 日志已经发出.
         logger.warning("mark pending writeback failed", metadata_ids=ids, exc_info=True)
+        return
+
+    if not retry:
+        # 结构化字段会被 WSEventLogHandler 原样带进 EventType.LOG.data, 前端 /logs 可直接看到影响范围.
+        logger.warning(
+            "incremental organize enqueue failed; pending writeback registered",
+            metadata_ids=ids,
+            error=error,
+            exc_info=True,
+        )
+        return
+
+    dead = [metadata_id for metadata_id in ids if attempts.get(metadata_id, 1) >= PENDING_WRITEBACK_MAX_ATTEMPTS]
+    if dead:
+        logger.error(
+            "pending writeback dead letter",
+            metadata_ids=dead,
+            attempts=PENDING_WRITEBACK_MAX_ATTEMPTS,
+            error=error,
+        )
+    notable = [
+        metadata_id
+        for metadata_id in ids
+        if metadata_id not in dead and attempts.get(metadata_id, 1) in _RETRY_LOG_ATTEMPTS
+    ]
+    if notable:
+        logger.info(
+            "pending writeback retry scheduled",
+            metadata_ids=notable,
+            attempts={str(metadata_id): attempts[metadata_id] for metadata_id in notable},
+            error=error,
+        )
+    quiet = [metadata_id for metadata_id in ids if metadata_id not in dead and metadata_id not in notable]
+    if quiet:
+        logger.debug("pending writeback retry failed", metadata_ids=quiet, error=error)

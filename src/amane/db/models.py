@@ -343,10 +343,16 @@ class PendingWriteback(SQLModel, table=True):
     """
 
     __tablename__ = "pending_writebacks"  # type: ignore[assignment]
-    __table_args__ = (Index("ix_pending_writebacks_created_at", "created_at"),)
+    __table_args__ = (
+        Index("ix_pending_writebacks_created_at", "created_at"),
+        Index("ix_pending_writebacks_next_attempt_at", "next_attempt_at"),
+    )
 
     metadata_id: int = Field(foreign_key="metadata.id", primary_key=True, ondelete="CASCADE")
     created_at: datetime = Field(default_factory=_utcnow)
+    attempts: int = Field(default=1, nullable=False)
+    next_attempt_at: datetime | None = Field(default_factory=_utcnow, nullable=True)
+    last_error: str | None = Field(default=None, nullable=True)
 
 
 def metadata_vr_predicate() -> ColumnElement[bool]:
