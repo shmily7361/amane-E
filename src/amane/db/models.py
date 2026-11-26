@@ -466,6 +466,8 @@ class Library(SQLModel, table=True):
     只对扫描视频扩展名生效 (与 watcher.media_extensions / MEDIA_EXTENSIONS 同一套);
     图片、NFO、字幕、`.strm` 指针都不参与.
     """
+    allow_metadata_trailer_only: bool = Field(default=False, nullable=False)
+    """允许只有元数据/预告片的目录独立存在; 关闭时这类目录按残留目录清理."""
 
 
 class Schedule(SQLModel, table=True):

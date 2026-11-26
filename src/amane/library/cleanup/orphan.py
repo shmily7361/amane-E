@@ -125,6 +125,7 @@ class OrphanScan:
     trailer_pattern: str | None = None
     patterns: Sequence[str] = ()
     media_extensions: frozenset[str] = MEDIA_EXTENSIONS
+    allow_metadata_trailer_only: bool = False
 
     @classmethod
     def from_library(
@@ -136,6 +137,7 @@ class OrphanScan:
         trailer_pattern: str | None,
         patterns: Sequence[str],
         media_extensions: frozenset[str] | None,
+        allow_metadata_trailer_only: bool = False,
     ) -> OrphanScan:
         """字幕取库设置与默认值的并集: 清空它表示关闭字幕发现, 不代表 `.srt` 不再是附属文件."""
         merged = tuple(dict.fromkeys([*subtitle_extensions, *DEFAULT_SUBTITLE_EXTENSIONS]))
@@ -146,6 +148,7 @@ class OrphanScan:
             trailer_pattern=trailer_pattern,
             patterns=tuple(patterns),
             media_extensions=media_extensions or MEDIA_EXTENSIONS,
+            allow_metadata_trailer_only=allow_metadata_trailer_only,
         )
 
     @property

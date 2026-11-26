@@ -209,6 +209,7 @@ class DeleteHandler(TaskHandler[DeletePayload, DeleteResult]):
             trailer_pattern=library.trailer_pattern,
             patterns=patterns,
             media_extensions=media_extensions,
+            allow_metadata_trailer_only=library.allow_metadata_trailer_only,
         )
 
     async def _delete_index_rows(self, library_id: int, targets: Sequence[Path]) -> int:
@@ -420,7 +421,9 @@ def _reverify_subtree(directory: Path, *, orphan_scan: OrphanScan) -> str | None
     if unreadable is not None:
         return unreadable
     trailer = orphan_scan.trailer_matcher()
-    trailer_is_companion = _has_non_trailer_companion(children, orphan_scan=orphan_scan, trailer=trailer)
+    trailer_is_companion = not orphan_scan.allow_metadata_trailer_only or _has_non_trailer_companion(
+        children, orphan_scan=orphan_scan, trailer=trailer
+    )
     for child in children:
         path = Path(child.path)
         try:
@@ -460,6 +463,9 @@ def _level_facts(directory: Path, *, orphan_scan: OrphanScan) -> _LevelFacts:
     if unreadable is not None:
         return _LevelFacts(unreadable=unreadable)
     trailer = orphan_scan.trailer_matcher()
+    trailer_is_companion = not orphan_scan.allow_metadata_trailer_only or _has_non_trailer_companion(
+        children, orphan_scan=orphan_scan, trailer=trailer
+    )
     has_media = False
     veto = False
     for child in children:
@@ -475,6 +481,8 @@ def _level_facts(directory: Path, *, orphan_scan: OrphanScan) -> _LevelFacts:
             veto = True
             continue
         if junk is not None or is_dir:
+            continue
+        if trailer_is_companion and orphan_scan.is_trailer(path, trailer=trailer):
             continue
         if orphan_scan.is_media(path, trailer=trailer):
             has_media = True

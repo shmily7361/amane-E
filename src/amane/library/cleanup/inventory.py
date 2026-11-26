@@ -386,10 +386,11 @@ def _walk(
         logger.warning("inventory scan directory unreadable", path=str(directory), error=str(exc))
         return None
 
-    # 预告片单独出现时仍按媒体保护; 与 NFO/图片等旧产物一起留下时, 它属于本次整理遗留的附属资源.
+    # 默认把预告片当附属资源: 只有库显式允许元数据/预告片独立存在时, 单独的预告片才按媒体保护.
     orphan_scan = state.orphan_scan
-    trailer_is_companion = orphan_scan is not None and _has_non_trailer_companion(
-        children, state=state, orphan_scan=orphan_scan
+    trailer_is_companion = orphan_scan is not None and (
+        not orphan_scan.allow_metadata_trailer_only
+        or _has_non_trailer_companion(children, state=state, orphan_scan=orphan_scan)
     )
     total = 0
     removed = 0

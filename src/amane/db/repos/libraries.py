@@ -90,6 +90,7 @@ class LibrariesRepoMixin(RepositoryMixinBase):
         trailer_pattern: str | None = None,
         blacklist_patterns: list[str] | None = None,
         min_file_size: int = 0,
+        allow_metadata_trailer_only: bool = False,
     ) -> Library:
         min_file_size = validate_min_file_size(min_file_size)
         cloud_path = resolve_ingest_cloud_path(ingest, cloud_path)
@@ -139,6 +140,7 @@ class LibrariesRepoMixin(RepositoryMixinBase):
                 ),
                 blacklist_patterns=[validate_blacklist_pattern(p) for p in (blacklist_patterns or [])],
                 min_file_size=min_file_size,
+                allow_metadata_trailer_only=allow_metadata_trailer_only,
             )
             session.add(lib)
             await session.commit()
@@ -262,6 +264,8 @@ class LibrariesRepoMixin(RepositoryMixinBase):
                 lib.blacklist_patterns = [validate_blacklist_pattern(p) for p in (patterns or [])]
             if "min_file_size" in updates:
                 lib.min_file_size = validate_min_file_size(updates["min_file_size"])
+            if "allow_metadata_trailer_only" in updates:
+                lib.allow_metadata_trailer_only = updates["allow_metadata_trailer_only"]
             session.add(lib)
             await session.commit()
             await session.refresh(lib)

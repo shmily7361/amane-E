@@ -110,6 +110,8 @@
   "fieldBlacklistPatternsHint": "每行一条正则, 命中则视为无效文件, 扫描时跳过, 清理时列为候选",
   "fieldMinFileSize": "最小视频大小",
   "fieldMinFileSizeHint": "小于此大小的视频视为无效文件, 清理时列为候选",
+  "fieldAllowMetadataTrailerOnly": "允许元数据和预告片独立存在",
+  "fieldAllowMetadataTrailerOnlyHint": "勾选后, 目录内只有 NFO、图片和预告片而不含有效视频时仍会保留; 默认不勾选, 这类目录按残留目录清理",
   "fieldSubtitleExtensions": "字幕扩展名",
   "fieldSubtitleExtensionsHint": "逗号分隔",
   "fieldMoveMode": "整理方式",

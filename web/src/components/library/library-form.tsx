@@ -99,6 +99,7 @@ export interface LibraryFormState {
   trailer_pattern: string;
   blacklist_patterns: string;
   min_file_size: number;
+  allow_metadata_trailer_only: boolean;
   subtitle_extensions: string;
   video_template: string;
   thumb_template: string;
@@ -132,6 +133,7 @@ export function emptyLibraryForm(schema?: PathTemplateSchemaResponse | null): Li
     trailer_pattern: "(?i)trailer",
     blacklist_patterns: "",
     min_file_size: 0,
+    allow_metadata_trailer_only: false,
     subtitle_extensions: (
       schema?.subtitle_extensions_default ?? [".srt", ".ass", ".ssa", ".vtt", ".sub"]
     ).join(", "),
@@ -167,6 +169,7 @@ export function libraryFormFromResponse(lib: LibraryResponse): LibraryFormState 
     trailer_pattern: lib.trailer_pattern,
     blacklist_patterns: lib.blacklist_patterns?.join("\n") ?? "",
     min_file_size: lib.min_file_size ?? 0,
+    allow_metadata_trailer_only: lib.allow_metadata_trailer_only,
     subtitle_extensions: lib.subtitle_extensions?.join(", ") ?? "",
     video_template: lib.video_template,
     thumb_template: lib.thumb_template ?? "",
@@ -215,6 +218,7 @@ function libraryFormValues(form: LibraryFormState): Record<string, unknown> {
     trailer_pattern: form.trailer_pattern,
     blacklist_patterns: parseBlacklistPatterns(form.blacklist_patterns),
     min_file_size: form.min_file_size,
+    allow_metadata_trailer_only: form.allow_metadata_trailer_only,
     subtitle_extensions: parseLibraryPatterns(form.subtitle_extensions),
     video_template: form.video_template.trim(),
     thumb_template: form.thumb_template.trim(),
@@ -376,6 +380,14 @@ export function LibraryFormFields({ value, onChange, showCreateOnly }: LibraryFo
             }}
           />
         </SimpleGrid>
+        <Checkbox
+          label={t("fieldAllowMetadataTrailerOnly")}
+          description={t("fieldAllowMetadataTrailerOnlyHint")}
+          checked={value.allow_metadata_trailer_only}
+          onChange={(e) =>
+            onChange({ ...value, allow_metadata_trailer_only: e.currentTarget.checked })
+          }
+        />
         <div className={classes.alignedRow}>
           <Input.Label className={classes.l1} htmlFor="library-subtitle-extensions">
             {t("fieldSubtitleExtensions")}

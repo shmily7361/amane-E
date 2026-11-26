@@ -74,6 +74,7 @@ async def create_library(req: LibraryCreateRequest, repo: RepoDep, runtime: Runt
             trailer_pattern=req.trailer_pattern,
             blacklist_patterns=req.blacklist_patterns,
             min_file_size=req.min_file_size,
+            allow_metadata_trailer_only=req.allow_metadata_trailer_only,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

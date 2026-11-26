@@ -42,6 +42,7 @@ _LIBRARY_UPDATE_KEYS = frozenset(
         "trailer_pattern",
         "blacklist_patterns",
         "min_file_size",
+        "allow_metadata_trailer_only",
     }
 )
 

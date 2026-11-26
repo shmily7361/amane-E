@@ -4468,6 +4468,11 @@ export const LibraryCreateRequestSchema = {
             title: 'Min File Size',
             default: 0
         },
+        allow_metadata_trailer_only: {
+            type: 'boolean',
+            title: 'Allow Metadata Trailer Only',
+            default: false
+        },
         scan: {
             type: 'boolean',
             title: 'Scan',
@@ -4707,6 +4712,10 @@ export const LibraryResponseSchema = {
         min_file_size: {
             type: 'integer',
             title: 'Min File Size'
+        },
+        allow_metadata_trailer_only: {
+            type: 'boolean',
+            title: 'Allow Metadata Trailer Only'
         }
     },
     type: 'object',
@@ -4726,7 +4735,8 @@ export const LibraryResponseSchema = {
         'copy_resources',
         'trailer_pattern',
         'blacklist_patterns',
-        'min_file_size'
+        'min_file_size',
+        'allow_metadata_trailer_only'
     ],
     title: 'LibraryResponse'
 } as const;
@@ -5037,6 +5047,17 @@ export const LibraryUpdateRequestSchema = {
                 }
             ],
             title: 'Min File Size'
+        },
+        allow_metadata_trailer_only: {
+            anyOf: [
+                {
+                    type: 'boolean'
+                },
+                {
+                    type: 'null'
+                }
+            ],
+            title: 'Allow Metadata Trailer Only'
         }
     },
     type: 'object',

@@ -87,6 +87,7 @@ class RefreshHandler(TaskHandler[RefreshPayload, RefreshResult]):
                             trailer_pattern=library.trailer_pattern,
                             patterns=payload.patterns or [],
                             media_extensions=self._media_extensions,
+                            allow_metadata_trailer_only=library.allow_metadata_trailer_only,
                         )
                         if library is not None
                         else None

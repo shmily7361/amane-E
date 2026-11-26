@@ -353,6 +353,7 @@ class LibraryUpdates(TypedDict, total=False):
     trailer_pattern: str
     blacklist_patterns: list[str]
     min_file_size: int
+    allow_metadata_trailer_only: bool
 
 
 class ScheduleUpdates(TypedDict, total=False):

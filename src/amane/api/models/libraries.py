@@ -64,6 +64,8 @@ class LibraryCreateRequest(BaseModel):
     """文件名正则列表; 命中任一则扫描/监控跳过, 并作为无效文件进入清理清单."""
     min_file_size: MinFileSize = 0
     """最小视频大小 (字节). 小于此值的扫描视频跳过入库, 并作为无效文件进入清理清单. 0 关闭."""
+    allow_metadata_trailer_only: bool = False
+    """允许只有元数据/预告片的目录独立存在; 关闭时这类目录按残留目录清理."""
     scan: bool = True
 
     @model_validator(mode="after")
@@ -108,6 +110,7 @@ class LibraryResponse(BaseModel):
     trailer_pattern: str
     blacklist_patterns: list[str]
     min_file_size: int
+    allow_metadata_trailer_only: bool
 
 
 class LibraryListResponse(BaseModel):

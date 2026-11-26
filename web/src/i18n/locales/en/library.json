@@ -112,6 +112,8 @@
   "fieldBlacklistPatternsHint": "One regex per line; matches are treated as unwanted files and listed as cleanup candidates",
   "fieldMinFileSize": "Minimum video size",
   "fieldMinFileSizeHint": "Videos smaller than this are treated as unwanted files and listed as cleanup candidates",
+  "fieldAllowMetadataTrailerOnly": "Allow metadata and trailer without video",
+  "fieldAllowMetadataTrailerOnlyHint": "When enabled, directories containing only NFO, images and a trailer are kept even without a valid video. Off by default: these directories are treated as leftovers during cleanup",
   "fieldSubtitleExtensions": "Subtitle extensions",
   "fieldSubtitleExtensionsHint": "Comma-separated",
   "fieldMoveMode": "Organize Mode",

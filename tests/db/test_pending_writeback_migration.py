@@ -88,3 +88,36 @@ def test_pending_writeback_retry_migration(tmp_path: Path) -> None:
         assert "ix_pending_writebacks_next_attempt_at" not in _indexes(conn, "pending_writebacks")
     finally:
         conn.close()
+
+
+def test_allow_metadata_trailer_only_migration(tmp_path: Path) -> None:
+    """库级清理开关可从 E0.29 库升级并回滚, 默认值为 false."""
+    db_path = tmp_path / "library-switch.db"
+    cfg: Config = alembic_config(db_path)
+    previous = "5140329a6da9"
+    target = "240c841b3619"
+
+    command.upgrade(cfg, previous)
+    conn = sqlite3.connect(db_path)
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(libraries)")}
+        assert "allow_metadata_trailer_only" not in cols
+    finally:
+        conn.close()
+
+    command.upgrade(cfg, target)
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = {row[1]: row for row in conn.execute("PRAGMA table_info(libraries)")}
+        assert "allow_metadata_trailer_only" in rows
+        assert str(rows["allow_metadata_trailer_only"][4]).strip("'").lower() in {"0", "false"}
+    finally:
+        conn.close()
+
+    command.downgrade(cfg, previous)
+    conn = sqlite3.connect(db_path)
+    try:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(libraries)")}
+        assert "allow_metadata_trailer_only" not in cols
+    finally:
+        conn.close()

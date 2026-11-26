@@ -49,6 +49,7 @@ class TestLibraries:
         assert body["trailer_pattern"] == "(?i)trailer"
         assert body["blacklist_patterns"] == []
         assert body["min_file_size"] == 0
+        assert body["allow_metadata_trailer_only"] is False
         assert body["subtitle_extensions"] == [".srt", ".ass", ".ssa", ".vtt", ".sub"]
         assert body["video_template"] == VIDEO_TEMPLATE_DEFAULT
         assert body["thumb_template"] is None
@@ -99,6 +100,7 @@ class TestLibraries:
                 "trailer_pattern": "预告",
                 "blacklist_patterns": ["广告", "预览"],
                 "min_file_size": 0,
+                "allow_metadata_trailer_only": True,
                 "subtitle_extensions": ["vtt"],
                 "link_template": str(safe_path / "emby" / "{number}" / "{number}.{ext}"),
                 "link_mode": "symlink",
@@ -113,6 +115,7 @@ class TestLibraries:
         assert pbody["trailer_pattern"] == "预告"
         assert pbody["blacklist_patterns"] == ["广告", "预览"]
         assert pbody["min_file_size"] == 0
+        assert pbody["allow_metadata_trailer_only"] is True
         assert pbody["subtitle_extensions"] == [".vtt"]
         assert pbody["link_mode"] == "symlink"
         assert pbody["link_template"] == str(safe_path / "emby" / "{number}" / "{number}.{ext}")

@@ -67,6 +67,7 @@ class ScanInvalidHandler(TaskHandler[ScanInvalidPayload, ScanInvalidResult]):
                 trailer_pattern=library.trailer_pattern,
                 patterns=payload.patterns or [],
                 media_extensions=media_extensions,
+                allow_metadata_trailer_only=library.allow_metadata_trailer_only,
             ),
         )
         self._inventory_store.put(inventory)

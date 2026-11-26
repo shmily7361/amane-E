@@ -2212,6 +2212,10 @@ export type LibraryCreateRequest = {
      */
     min_file_size?: number;
     /**
+     * Allow Metadata Trailer Only
+     */
+    allow_metadata_trailer_only?: boolean;
+    /**
      * Scan
      */
     scan?: boolean;
@@ -2338,6 +2342,10 @@ export type LibraryResponse = {
      * Min File Size
      */
     min_file_size: number;
+    /**
+     * Allow Metadata Trailer Only
+     */
+    allow_metadata_trailer_only: boolean;
 };
 
 /**
@@ -2440,6 +2448,10 @@ export type LibraryUpdateRequest = {
      * Min File Size
      */
     min_file_size?: number | null;
+    /**
+     * Allow Metadata Trailer Only
+     */
+    allow_metadata_trailer_only?: boolean | null;
 };
 
 /**

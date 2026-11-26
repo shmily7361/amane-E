@@ -37,6 +37,7 @@ def _orphan_scan(
     scope: Path | None = None,
     subtitles: list[str] | None = None,
     patterns: list[str] | None = None,
+    allow_metadata_trailer_only: bool = False,
 ) -> OrphanScan:
     return OrphanScan.from_library(
         library_root=lib,
@@ -45,6 +46,7 @@ def _orphan_scan(
         trailer_pattern="(?i)trailer",
         patterns=patterns or [],
         media_extensions=None,
+        allow_metadata_trailer_only=allow_metadata_trailer_only,
     )
 
 
@@ -65,6 +67,7 @@ def _scan(
     limit: int = 20000,
     blacklist: list[str] | None = None,
     orphan: bool = True,
+    allow_metadata_trailer_only: bool = False,
     now: float = _NOW,
 ) -> CleanupInventory:
     scope_dir = scope or lib
@@ -76,7 +79,15 @@ def _scan(
         patterns=patterns or [],
         scan=LibraryScan(blacklist_patterns=blacklist, trailer_pattern="(?i)trailer", patterns=patterns),
         limit=limit,
-        orphan_scan=_orphan_scan(lib, scope=scope, subtitles=subtitles, patterns=patterns) if orphan else None,
+        orphan_scan=_orphan_scan(
+            lib,
+            scope=scope,
+            subtitles=subtitles,
+            patterns=patterns,
+            allow_metadata_trailer_only=allow_metadata_trailer_only,
+        )
+        if orphan
+        else None,
         now=now,
     )
 
@@ -196,12 +207,22 @@ class TestOrphanVerdict:
 
         assert _reasons(_scan(lib), lib) == {}
 
-    def test_trailer_counts_as_media(self, tmp_path: Path) -> None:
-        """预告片在 classify 里是 SKIP; 判定不能因此把只含它的目录当成残留."""
+    def test_trailer_only_directory_is_orphan_by_default(self, tmp_path: Path) -> None:
+        """默认不允许元数据/预告片独立存在: 只含预告片的目录按残留目录清理."""
         lib = tmp_path / "lib"
         _touch(lib / "old" / "trailer.mp4")
 
-        assert _reasons(_scan(lib), lib) == {}
+        assert _reasons(_scan(lib), lib) == {
+            "old": InventoryReason.ORPHAN,
+            "old/trailer.mp4": InventoryReason.ORPHAN,
+        }
+
+    def test_trailer_counts_as_media_when_allowed(self, tmp_path: Path) -> None:
+        """显式允许后保留原行为: 单独的预告片继续保护目录."""
+        lib = tmp_path / "lib"
+        _touch(lib / "old" / "trailer.mp4")
+
+        assert _reasons(_scan(lib, allow_metadata_trailer_only=True), lib) == {}
 
     def test_trailer_with_other_companions_is_orphan(self, tmp_path: Path) -> None:
         """旧视频搬走后留下的预告片与 NFO/海报同属残留, 不应再把目录判成有媒体."""
