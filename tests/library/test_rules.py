@@ -6,11 +6,13 @@ import pytest
 from pydantic import ValidationError
 
 from amane.db.models import Library
+from amane.library import LibraryFileKind, LibraryScan
 from amane.library.rules import (
     compile_skip_patterns,
     has_companion_subtitle,
     is_in_trash,
     is_skipped_media,
+    is_trailer_path,
     is_undersized_video,
     is_video_media,
     normalize_subtitle_extensions,
@@ -34,6 +36,28 @@ SKIP_CASES = [
 @pytest.mark.parametrize(("pattern", "name", "skipped"), SKIP_CASES)
 def test_is_skipped_media(pattern: str, name: str, skipped: bool):
     assert is_skipped_media(Path("/lib") / name, pattern) is skipped
+
+
+@pytest.mark.parametrize(
+    ("pattern", "path", "expected"),
+    [
+        ("(?i)trailer", "/lib/trailer.mp4", True),
+        ("(?i)trailer", "/lib/trailers/ABC-123.mp4", True),
+        ("(?i)trailer", "/lib/trailers/sub/ABC-123.mp4", False),
+        ("(?i)trailer", "/lib/ABC-123.mp4", False),
+        (None, "/lib/trailer.mp4", False),
+    ],
+)
+def test_is_trailer_path(pattern: str | None, path: str, expected: bool):
+    compiled = compile_skip_patterns([pattern])
+    matcher = compiled[0] if compiled else None
+    assert is_trailer_path(Path(path), matcher) is expected
+
+
+def test_library_scan_skips_trailer_in_named_directory():
+    scanner = LibraryScan(trailer_pattern="(?i)trailer")
+
+    assert scanner.classify(Path("/lib/trailers/ABC-123.mp4")) is LibraryFileKind.SKIP
 
 
 def test_validate_trailer_pattern_rejects_invalid():

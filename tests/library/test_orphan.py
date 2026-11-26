@@ -38,6 +38,8 @@ def _orphan_scan(
     subtitles: list[str] | None = None,
     patterns: list[str] | None = None,
     allow_metadata_trailer_only: bool = False,
+    min_file_size: int = 0,
+    blacklist: list[str] | None = None,
 ) -> OrphanScan:
     return OrphanScan.from_library(
         library_root=lib,
@@ -47,6 +49,8 @@ def _orphan_scan(
         patterns=patterns or [],
         media_extensions=None,
         allow_metadata_trailer_only=allow_metadata_trailer_only,
+        min_file_size=min_file_size,
+        blacklist_patterns=blacklist or [],
     )
 
 
@@ -68,6 +72,7 @@ def _scan(
     blacklist: list[str] | None = None,
     orphan: bool = True,
     allow_metadata_trailer_only: bool = False,
+    min_file_size: int = 0,
     now: float = _NOW,
 ) -> CleanupInventory:
     scope_dir = scope or lib
@@ -77,7 +82,12 @@ def _scan(
         library_root=lib,
         recursive=recursive,
         patterns=patterns or [],
-        scan=LibraryScan(blacklist_patterns=blacklist, trailer_pattern="(?i)trailer", patterns=patterns),
+        scan=LibraryScan(
+            blacklist_patterns=blacklist,
+            trailer_pattern="(?i)trailer",
+            patterns=patterns,
+            min_file_size=min_file_size,
+        ),
         limit=limit,
         orphan_scan=_orphan_scan(
             lib,
@@ -85,6 +95,8 @@ def _scan(
             subtitles=subtitles,
             patterns=patterns,
             allow_metadata_trailer_only=allow_metadata_trailer_only,
+            min_file_size=min_file_size,
+            blacklist=blacklist,
         )
         if orphan
         else None,
@@ -237,6 +249,81 @@ class TestOrphanVerdict:
             "old/poster.jpg": InventoryReason.ORPHAN,
             "old/NSFS-039.nfo": InventoryReason.ORPHAN,
         }
+
+    @pytest.mark.parametrize(
+        ("files", "default_orphan", "allowed_orphan"),
+        [
+            (("trailer.mp4",), True, False),
+            (("trailer.mp4", "poster.jpg", "movie.nfo"), True, False),
+            (("trailer.mp4", "extrafanart/1.jpg"), True, False),
+            (("trailers/ABC-123.mp4",), True, False),
+            (("poster.jpg",), True, True),
+            (("NSFS-039.mp4", "trailer.mp4"), False, False),
+        ],
+        ids=["trailer", "trailer+companions", "trailer+nested-companion", "trailers-dir", "poster", "video+trailer"],
+    )
+    def test_trailer_switch_matrix(
+        self, tmp_path: Path, files: tuple[str, ...], default_orphan: bool, allowed_orphan: bool
+    ) -> None:
+        """勾选语义只看有无预告片, 不再依赖同层是否还有其它附属文件."""
+        lib = tmp_path / "lib"
+        for rel in files:
+            _touch(lib / "old" / rel, size=2048)
+
+        default = _reasons(_scan(lib), lib)
+        allowed = _reasons(_scan(lib, allow_metadata_trailer_only=True), lib)
+
+        def has_orphan(reasons: dict[str, InventoryReason]) -> bool:
+            return any(
+                path == "old" or path.startswith("old/")
+                for path, reason in reasons.items()
+                if reason is InventoryReason.ORPHAN
+            )
+
+        assert has_orphan(default) is default_orphan
+        assert has_orphan(allowed) is allowed_orphan
+
+    @pytest.mark.parametrize(
+        ("files", "allow", "min_file_size", "blacklist", "orphan", "file_reason"),
+        [
+            (("trailer.mp4", "sample.mp4"), False, 1024, None, True, InventoryReason.UNDERSIZED),
+            (("sample.mp4",), False, 1024, None, True, InventoryReason.UNDERSIZED),
+            (("sample.mp4",), True, 1024, None, True, InventoryReason.UNDERSIZED),
+            (("video.mp4",), False, 1024, None, False, None),
+            (("sample.mp4",), False, 1024, ["sample"], False, InventoryReason.BLACKLIST),
+            (("sample.mp4",), False, 0, None, False, None),
+        ],
+        ids=["trailer+small", "small-only", "small-only-allowed", "valid", "blacklisted", "size-off"],
+    )
+    def test_min_file_size_participates_in_orphan_verdict(
+        self,
+        tmp_path: Path,
+        files: tuple[str, ...],
+        allow: bool,
+        min_file_size: int,
+        blacklist: list[str] | None,
+        orphan: bool,
+        file_reason: InventoryReason | None,
+    ) -> None:
+        lib = tmp_path / "lib"
+        for name in files:
+            _touch(lib / "old" / name, size=2048 if name == "video.mp4" else 64)
+
+        reasons = _reasons(
+            _scan(
+                lib,
+                allow_metadata_trailer_only=allow,
+                min_file_size=min_file_size,
+                blacklist=blacklist,
+            ),
+            lib,
+        )
+
+        assert ("old" in reasons) is orphan
+        if file_reason is None:
+            assert "old/sample.mp4" not in reasons and "old/video.mp4" not in reasons
+        else:
+            assert reasons["old/sample.mp4"] is file_reason
 
     def test_blacklisted_video_blocks_orphan_and_stays_an_entry(self, tmp_path: Path) -> None:
         """命中黑名单的视频同样是库内的一份内容: 目录不成残留, 它自己仍是黑名单条目."""

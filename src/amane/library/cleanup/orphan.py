@@ -21,7 +21,15 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..rules import DEFAULT_SUBTITLE_EXTENSIONS, MEDIA_EXTENSIONS, compile_skip_patterns, is_in_trash
+from ..rules import (
+    DEFAULT_SUBTITLE_EXTENSIONS,
+    MEDIA_EXTENSIONS,
+    compile_skip_patterns,
+    is_in_trash,
+    is_skipped_media,
+    is_trailer_path,
+    is_undersized_video,
+)
 
 if TYPE_CHECKING:
     from re import Pattern
@@ -126,6 +134,8 @@ class OrphanScan:
     patterns: Sequence[str] = ()
     media_extensions: frozenset[str] = MEDIA_EXTENSIONS
     allow_metadata_trailer_only: bool = False
+    min_file_size: int = 0
+    blacklist_patterns: tuple[str, ...] = ()
 
     @classmethod
     def from_library(
@@ -138,6 +148,8 @@ class OrphanScan:
         patterns: Sequence[str],
         media_extensions: frozenset[str] | None,
         allow_metadata_trailer_only: bool = False,
+        min_file_size: int = 0,
+        blacklist_patterns: Sequence[str] = (),
     ) -> OrphanScan:
         """字幕取库设置与默认值的并集: 清空它表示关闭字幕发现, 不代表 `.srt` 不再是附属文件."""
         merged = tuple(dict.fromkeys([*subtitle_extensions, *DEFAULT_SUBTITLE_EXTENSIONS]))
@@ -149,6 +161,8 @@ class OrphanScan:
             patterns=tuple(patterns),
             media_extensions=media_extensions or MEDIA_EXTENSIONS,
             allow_metadata_trailer_only=allow_metadata_trailer_only,
+            min_file_size=min_file_size,
+            blacklist_patterns=tuple(blacklist_patterns),
         )
 
     @property
@@ -163,8 +177,9 @@ class OrphanScan:
     def is_media(self, path: Path, *, trailer: Pattern[str] | None = None) -> bool:
         """库会当作影片接收的路径.
 
-        不套用文件黑名单与最小视频大小: 命中文件黑名单的视频同样是库内的一份内容, 排除它会让只含
-        `sample.mp4` 的目录被整目录删除. 扩展名与预告片先于 `patterns`: 用户可以把 `.mp4`
+        不套用文件黑名单: 命中文件黑名单的视频同样是库内的一份内容, 排除它会让只含
+        `sample.mp4` 的目录被整目录删除. 最小视频大小由 `protects_directory` 单独处理.
+        扩展名与预告片先于 `patterns`: 用户可以把 `.mp4`
         写进 `subtitle_extensions`, 而 `patterns` 非空的库里不匹配 `patterns` 的 `.mp4` 不算媒体,
         于是白名单成员会被当成残留.
         """
@@ -172,16 +187,35 @@ class OrphanScan:
             return False
         if path.suffix.lower() in self.media_extensions:
             return True
-        if trailer is not None and trailer.search(path.name):
+        if is_trailer_path(path, trailer):
             return True
         return any(path.match(pattern) for pattern in self.patterns)
+
+    def protects_directory(self, path: Path, size: int, *, trailer: Pattern[str] | None) -> bool:
+        """该文件是否让所在目录免于按残留清理.
+
+        低于 `min_file_size` 的视频本来就会作为 UNDERSIZED 条目删除, 不能靠它把目录留下,
+        否则用户要扫两遍. 黑名单视频仍保护目录: 它是用户明确标记不要的内容, 但仍是库内一份内容.
+        """
+        if not self.is_media(path, trailer=trailer):
+            return False
+        if is_trailer_path(path, trailer):
+            return True
+        if any(is_skipped_media(path, pattern) for pattern in self.blacklist_patterns):
+            return True
+        undersized = (
+            self.min_file_size
+            and (path.is_symlink() or size <= self.min_file_size)
+            and is_undersized_video(path, self.min_file_size, self.media_extensions)
+        )
+        return not undersized
 
     def is_companion(self, path: Path) -> bool:
         return path.suffix.lower() in self.companion_extensions
 
     def is_trailer(self, path: Path, *, trailer: Pattern[str] | None) -> bool:
-        """预告片不是正片; 与 NFO/图片等一起出现在旧目录时按附属文件处理."""
-        return trailer is not None and bool(trailer.search(path.name))
+        """预告片不是正片; 文件名或父目录名命中同一套正则即算."""
+        return is_trailer_path(path, trailer)
 
     def verdict(
         self,

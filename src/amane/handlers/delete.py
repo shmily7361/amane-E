@@ -33,8 +33,6 @@ from .models import DeletePayload, DeleteResult
 from .protocol import TaskHandler, TaskResult
 
 if TYPE_CHECKING:
-    from re import Pattern
-
     from ..config import HotSettings
     from ..db.models import Library
     from ..db.repository import Repository
@@ -210,6 +208,8 @@ class DeleteHandler(TaskHandler[DeletePayload, DeleteResult]):
             patterns=patterns,
             media_extensions=media_extensions,
             allow_metadata_trailer_only=library.allow_metadata_trailer_only,
+            min_file_size=library.min_file_size,
+            blacklist_patterns=library.blacklist_patterns,
         )
 
     async def _delete_index_rows(self, library_id: int, targets: Sequence[Path]) -> int:
@@ -392,24 +392,6 @@ def _reverify_empty_dir(directory: Path) -> str | None:
     return "目录不再是空的" if children else None
 
 
-def _has_non_trailer_companion(
-    children: Sequence[os.DirEntry[str]], *, orphan_scan: OrphanScan, trailer: Pattern[str] | None
-) -> bool:
-    """与扫描侧同口径: 预告片之外还有附属文件时, 预告片按残留内容处理."""
-    for child in children:
-        path = Path(child.path)
-        try:
-            if stat.S_ISDIR(path.lstat().st_mode):
-                continue
-        except OSError:
-            continue
-        if trailer is not None and trailer.search(path.name):
-            continue
-        if orphan_scan.is_companion(path):
-            return True
-    return False
-
-
 def _reverify_subtree(directory: Path, *, orphan_scan: OrphanScan) -> str | None:
     """整棵子树的复验: 与扫描时的条件同口径 (冷却期除外).
 
@@ -421,9 +403,7 @@ def _reverify_subtree(directory: Path, *, orphan_scan: OrphanScan) -> str | None
     if unreadable is not None:
         return unreadable
     trailer = orphan_scan.trailer_matcher()
-    trailer_is_companion = not orphan_scan.allow_metadata_trailer_only or _has_non_trailer_companion(
-        children, orphan_scan=orphan_scan, trailer=trailer
-    )
+    trailer_is_companion = not orphan_scan.allow_metadata_trailer_only
     for child in children:
         path = Path(child.path)
         try:
@@ -451,6 +431,9 @@ def _reverify_subtree(directory: Path, *, orphan_scan: OrphanScan) -> str | None
         if trailer_is_companion and orphan_scan.is_trailer(path, trailer=trailer):
             continue
         if orphan_scan.is_media(path, trailer=trailer):
+            if not orphan_scan.protects_directory(path, child_stat.st_size, trailer=trailer):
+                # 低于最小体积的视频: 它本身就是待删条目, 不否决所在目录.
+                continue
             return f"目录里出现了媒体: {path.name}"
         if not orphan_scan.is_companion(path):
             return f"目录里出现了无法解释的文件: {path.name}"
@@ -463,19 +446,18 @@ def _level_facts(directory: Path, *, orphan_scan: OrphanScan) -> _LevelFacts:
     if unreadable is not None:
         return _LevelFacts(unreadable=unreadable)
     trailer = orphan_scan.trailer_matcher()
-    trailer_is_companion = not orphan_scan.allow_metadata_trailer_only or _has_non_trailer_companion(
-        children, orphan_scan=orphan_scan, trailer=trailer
-    )
+    trailer_is_companion = not orphan_scan.allow_metadata_trailer_only
     has_media = False
     veto = False
     for child in children:
         path = Path(child.path)
         try:
-            is_dir = stat.S_ISDIR(path.lstat().st_mode)
+            child_stat = path.lstat()
         except FileNotFoundError:
             continue
         except OSError as exc:
             return _LevelFacts(unreadable=f"子项无法读取: {exc}")
+        is_dir = stat.S_ISDIR(child_stat.st_mode)
         junk = classify_junk(path, is_dir=is_dir)
         if junk is JunkKind.VETO and not is_dir:
             veto = True
@@ -484,6 +466,8 @@ def _level_facts(directory: Path, *, orphan_scan: OrphanScan) -> _LevelFacts:
             continue
         if trailer_is_companion and orphan_scan.is_trailer(path, trailer=trailer):
             continue
-        if orphan_scan.is_media(path, trailer=trailer):
+        if orphan_scan.is_media(path, trailer=trailer) and orphan_scan.protects_directory(
+            path, child_stat.st_size, trailer=trailer
+        ):
             has_media = True
     return _LevelFacts(has_media=has_media, veto=veto)

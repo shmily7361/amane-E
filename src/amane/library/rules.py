@@ -139,6 +139,17 @@ def is_undersized_video(path: Path, min_file_size: int, media_extensions: frozen
         return False
 
 
+def is_trailer_path(path: Path, matcher: Pattern[str] | None) -> bool:
+    """文件名或其父目录名命中预告片正则即视为预告片.
+
+    父目录一层足以覆盖 `trailers/<任意名>.mp4` 这种由 trailer_template 生成的布局;
+    不按绝对路径匹配, 避免库外同名目录造成误判.
+    """
+    if matcher is None:
+        return False
+    return bool(matcher.search(path.name) or matcher.search(path.parent.name))
+
+
 def is_skipped_media(path: Path, pattern: str | None) -> bool:
     """只匹配文件名 (含扩展名), 不匹配目录段."""
     compiled = compile_skip_patterns([pattern])

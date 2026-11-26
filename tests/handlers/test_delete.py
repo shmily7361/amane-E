@@ -340,14 +340,24 @@ def _age_for_orphan(root: Path) -> None:
     os.utime(root, (old, old))
 
 
-def _orphan_scan(root: Path) -> OrphanScan:
+def _orphan_scan(
+    root: Path,
+    *,
+    trailer_pattern: str | None = None,
+    allow_metadata_trailer_only: bool = False,
+    min_file_size: int = 0,
+    blacklist_patterns: list[str] | None = None,
+) -> OrphanScan:
     return OrphanScan.from_library(
         library_root=root,
         scope_dir=root,
         subtitle_extensions=[".srt"],
-        trailer_pattern=None,
+        trailer_pattern=trailer_pattern,
         patterns=[],
         media_extensions=None,
+        allow_metadata_trailer_only=allow_metadata_trailer_only,
+        min_file_size=min_file_size,
+        blacklist_patterns=blacklist_patterns or [],
     )
 
 
@@ -741,6 +751,43 @@ def test_reverify_trailer_only_is_protected_when_allowed(tmp_path: Path) -> None
     )
 
     assert delete_module._reverify_subtree(container, orphan_scan=orphan_scan) == "目录里出现了媒体: trailer.mp4"
+
+
+@pytest.mark.parametrize(
+    ("allow", "expected"),
+    [(False, None), (True, "目录里出现了媒体: ABC-123.mp4")],
+)
+def test_reverify_trailer_in_named_directory(tmp_path: Path, allow: bool, expected: str | None) -> None:
+    """预告片模板带子目录时, 父目录名命中同样按预告片保护/清理."""
+    container = tmp_path / "old"
+    target = container / "trailers" / "ABC-123.mp4"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"trailer")
+    orphan_scan = _orphan_scan(tmp_path, trailer_pattern="(?i)trailer", allow_metadata_trailer_only=allow)
+
+    assert delete_module._reverify_subtree(container, orphan_scan=orphan_scan) == expected
+
+
+def test_reverify_undersized_video_does_not_protect(tmp_path: Path) -> None:
+    """低于最小体积的视频同时不保护目录, 复验与扫描口径一致."""
+    container = tmp_path / "old"
+    container.mkdir()
+    (container / "sample.mp4").write_bytes(b"x" * 64)
+    orphan_scan = _orphan_scan(tmp_path, min_file_size=1024)
+
+    assert delete_module._reverify_subtree(container, orphan_scan=orphan_scan) is None
+    assert delete_module._level_facts(container, orphan_scan=orphan_scan).has_media is False
+
+
+def test_reverify_blacklisted_video_still_protects(tmp_path: Path) -> None:
+    """黑名单视频仍是库内内容, 即使低于最小体积也不让目录进入删除."""
+    container = tmp_path / "old"
+    container.mkdir()
+    (container / "sample.mp4").write_bytes(b"x" * 64)
+    orphan_scan = _orphan_scan(tmp_path, min_file_size=1024, blacklist_patterns=["sample"])
+
+    assert delete_module._level_facts(container, orphan_scan=orphan_scan).has_media is True
+    assert delete_module._reverify_subtree(container, orphan_scan=orphan_scan) is not None
 
 
 def test_reverify_empty_dir_reports_reason(tmp_path: Path) -> None:

@@ -6,7 +6,13 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .rules import MEDIA_EXTENSIONS, compile_skip_patterns, is_in_trash, is_undersized_video
+from .rules import (
+    MEDIA_EXTENSIONS,
+    compile_skip_patterns,
+    is_in_trash,
+    is_trailer_path,
+    is_undersized_video,
+)
 
 if TYPE_CHECKING:
     from re import Pattern
@@ -58,7 +64,8 @@ class LibraryScan:
         self.min_file_size = min_file_size
         self.media_extensions = MEDIA_EXTENSIONS if media_extensions is None else media_extensions
         self.subtitle_extensions = frozenset(ext.lower() for ext in (subtitle_extensions or ()))
-        self._trailer: list[Pattern[str]] | None = compile_skip_patterns([trailer_pattern])
+        trailer = compile_skip_patterns([trailer_pattern])
+        self._trailer: Pattern[str] | None = trailer[0] if trailer else None
         self._blacklist: list[Pattern[str]] | None = compile_skip_patterns(self.blacklist_patterns)
 
     def unwanted_kind(self, path: Path) -> UnwantedKind | None:
@@ -72,7 +79,7 @@ class LibraryScan:
         name = path.name
         if self._matches(self._blacklist, name):
             return UnwantedKind.BLACKLIST
-        if self._matches(self._trailer, name):
+        if is_trailer_path(path, self._trailer):
             return None
         if is_undersized_video(path, self.min_file_size, media_extensions=self.media_extensions):
             return UnwantedKind.UNDERSIZED
@@ -84,8 +91,8 @@ class LibraryScan:
             return None
         if self.unwanted_kind(path) is not None:
             return LibraryFileKind.UNWANTED
-        # 预告片 → 跳过.
-        if self._matches(self._trailer, path.name):
+        # 预告片 → 跳过 (文件名或父目录名命中, 与清理侧同口径).
+        if is_trailer_path(path, self._trailer):
             return LibraryFileKind.SKIP
         # glob 或扩展名命中 → 媒体; 其余不产出.
         if self.patterns:

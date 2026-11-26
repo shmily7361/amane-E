@@ -386,12 +386,9 @@ def _walk(
         logger.warning("inventory scan directory unreadable", path=str(directory), error=str(exc))
         return None
 
-    # 默认把预告片当附属资源: 只有库显式允许元数据/预告片独立存在时, 单独的预告片才按媒体保护.
+    # 默认把预告片当附属资源; 库显式允许后, 只要还有预告片就按媒体保护所在目录.
     orphan_scan = state.orphan_scan
-    trailer_is_companion = orphan_scan is not None and (
-        not orphan_scan.allow_metadata_trailer_only
-        or _has_non_trailer_companion(children, state=state, orphan_scan=orphan_scan)
-    )
+    trailer_is_companion = orphan_scan is not None and not orphan_scan.allow_metadata_trailer_only
     total = 0
     removed = 0
     entries = 0
@@ -454,18 +451,20 @@ def _walk(
             subdirs.append((path, child_stat))
             continue
         has_content = True
-        if _process_file(
+        unwanted = _process_file(
             path,
             state=state,
             scan=scan,
             child_stat=child_stat,
             is_symlink=stat.S_ISLNK(child_stat.st_mode),
-        ):
+        )
+        if unwanted is not None:
             entries += 1
             removed += 1
             bytes_total += child_stat.st_size
-            if junk is None:
-                level_media = level_media or _is_media(path, state=state)
+            # UNDERSIZED 已被登记为待删条目, 不能同时靠它把目录判成有媒体; 黑名单仍是内容.
+            if junk is None and unwanted is not UnwantedKind.UNDERSIZED:
+                level_media = level_media or _protects_directory(path, child_stat, state=state)
             continue
         if junk is JunkKind.DELETABLE:
             noise.append((path, child_stat))
@@ -474,13 +473,17 @@ def _walk(
             undeletable = True
             level_veto = True
             continue
-        if trailer_is_companion and state.trailer_matcher is not None and state.trailer_matcher.search(path.name):
+        if (
+            trailer_is_companion
+            and orphan_scan is not None
+            and orphan_scan.is_trailer(path, trailer=state.trailer_matcher)
+        ):
             # 旧视频搬走后留下的预告片: 与 NFO/图片同批清理, 不再把目录判成「仍有媒体」.
             bytes_total += child_stat.st_size
             companions.append((path, child_stat))
             continue
         orphan_scan = state.orphan_scan
-        if orphan_scan is not None and orphan_scan.is_media(path, trailer=state.trailer_matcher):
+        if orphan_scan is not None and _protects_directory(path, child_stat, state=state):
             level_media = True
             continue
         if orphan_scan is not None and orphan_scan.is_companion(path):
@@ -546,32 +549,12 @@ def _walk(
     )
 
 
-def _is_media(path: Path, *, state: _ScanState) -> bool:
-    """本层是否存在媒体. 只在带残留判定的扫描里查询, 其余调用方不承担这次判定."""
+def _protects_directory(path: Path, child_stat: os.stat_result, *, state: _ScanState) -> bool:
+    """该文件是否保护所在目录; 只在带残留判定的扫描里查询."""
     orphan_scan = state.orphan_scan
     if orphan_scan is None:
         return False
-    return orphan_scan.is_media(path, trailer=state.trailer_matcher)
-
-
-def _has_non_trailer_companion(
-    children: Sequence[os.DirEntry[str]], *, state: _ScanState, orphan_scan: OrphanScan
-) -> bool:
-    """本层是否有预告片之外的附属文件; 用来区分「旧目录残留」与「只放预告片的目录」."""
-    for child in children:
-        if child.name == TRASH_DIRNAME:
-            continue
-        try:
-            if not child.is_file(follow_symlinks=False):
-                continue
-        except OSError:
-            continue
-        path = Path(child.path)
-        if state.trailer_matcher is not None and state.trailer_matcher.search(path.name):
-            continue
-        if orphan_scan.is_companion(path):
-            return True
-    return False
+    return orphan_scan.protects_directory(path, child_stat.st_size, trailer=state.trailer_matcher)
 
 
 def _process_file(
@@ -581,17 +564,18 @@ def _process_file(
     scan: LibraryScan,
     child_stat: os.stat_result,
     is_symlink: bool,
-) -> bool:
-    """登记无效文件条目; 返回该文件是否进清单."""
+) -> UnwantedKind | None:
+    """登记无效文件条目; 返回命中的无效规则 (未登记或不是无效文件则为 None)."""
     kind = scan.classify(path)
     if kind is LibraryFileKind.MEDIA:
         if state.collect_media:
             state.media.append(LibraryHit(path, kind))
-        return False
-    if kind is not LibraryFileKind.UNWANTED:
-        return False
+        return None
+    unwanted = scan.unwanted_kind(path)
+    if unwanted is None:
+        return None
     entry = _file_entry(path, scan=scan, child_stat=child_stat, is_symlink=is_symlink)
-    return entry is not None and _record_entry(entry, state=state)
+    return unwanted if entry is not None and _record_entry(entry, state=state) else None
 
 
 def _record_dir(
