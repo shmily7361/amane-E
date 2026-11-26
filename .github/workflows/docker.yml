@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to build (e.g. vE0.29.1); blank uses the dispatched ref"
+        required: false
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -17,9 +23,15 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
-      - name: Image name
-        run: echo "IMAGE=${REGISTRY}/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/amane" >> "$GITHUB_ENV"
+      - name: Image name and version
+        run: |
+          echo "IMAGE=${REGISTRY}/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/amane" >> "$GITHUB_ENV"
+          REF="${{ inputs.ref || github.ref_name }}"
+          VERSION="${REF#v}"
+          echo "VERSION=$(echo "$VERSION" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v4
@@ -43,6 +55,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
+            type=raw,value=${{ env.VERSION }}
             type=raw,value=latest
 
       - name: Build and push
