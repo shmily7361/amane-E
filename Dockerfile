@@ -1,5 +1,6 @@
-# syntax=docker/dockerfile:1
 # Amane 元数据管理服务
+# 构建环境无法拉取 docker/dockerfile 前端, 使用内置前端; 需要 BuildKit 新语法时把下一行恢复为首行.
+# syntax=docker/dockerfile:1
 
 # --- 前端构建阶段 ---
 FROM node:26-slim AS web-builder
@@ -14,7 +15,8 @@ RUN pnpm build
 # --- Python 依赖阶段 ---
 FROM python:3.14-slim AS base
 WORKDIR /app
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+# 固定 uv 版本, 避免 latest 漂移导致镜像构建不可复现.
+COPY --from=ghcr.io/astral-sh/uv:0.13.9 /uv /bin/uv
 # 解释器由基础镜像提供, 禁止 uv 另下托管版本. .python-version 一并拷入, 让"镜像该给哪个
 # 小版本"成为显式请求: 基础镜像被换成 3.15 时会立刻失败, 而不是静默换解释器后照常出包.
 ENV UV_PYTHON_DOWNLOADS=never
