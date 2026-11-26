@@ -107,10 +107,12 @@ def write_versions(root: Path, version: str) -> None:
 
 def generate(root: Path) -> None:
     _run([sys.executable, str(root / "scripts" / "export_openapi.py")], root)
-    if shutil.which("pnpm") is None or not (root / "web" / "node_modules").is_dir():
+    pnpm = shutil.which("pnpm")
+    if pnpm is None or not (root / "web" / "node_modules").is_dir():
         print("pnpm 或 web/node_modules 不可用: 跳过 TS client 生成, 请手动执行 pnpm gen-client")  # noqa: T201
         return
-    _run(["pnpm", "gen-client"], root / "web")
+    # Windows 上 pnpm 是 .CMD shim, 传完整路径给 CreateProcess 才不会报 WinError 2.
+    _run([pnpm, "gen-client"], root / "web")
 
 
 def rollback_written(root: Path) -> None:
