@@ -51,14 +51,20 @@ def version_aliases(raw: str) -> frozenset[str]:
         parts = text[1:].split(".")
         if len(parts) >= 2:
             major, minor = parts[0], parts[1]
-            aliases.add(f"{major}.{minor}.0+e{major}.{minor}")
-            aliases.add(f"{major}.{minor}.0")
+            suffix = f".{parts[2]}" if len(parts) >= 3 else ""
+            aliases.add(f"{major}.{minor}.0+e{major}.{minor}{suffix}")
+            # 三段式不把裸 base 加进来, 避免与官方 ## vX.Y.0 节混淆.
+            if not suffix:
+                aliases.add(f"{major}.{minor}.0")
     else:
-        base = text.split("+", 1)[0]
+        base, _, local = text.partition("+")
         aliases.add(base)
-        parts = base.split(".")
-        if len(parts) >= 2:
-            aliases.add(f"E{parts[0]}.{parts[1]}")
+        if local.startswith("e"):
+            parts = local[1:].split(".")
+            if len(parts) >= 3:
+                aliases.add(f"E{parts[0]}.{parts[1]}.{parts[2]}")
+            elif len(parts) >= 2:
+                aliases.add(f"E{parts[0]}.{parts[1]}")
     return frozenset(aliases)
 
 

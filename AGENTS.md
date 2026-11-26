@@ -141,7 +141,7 @@ just build               # 导出 OpenAPI + 构建前端
 ```
 
 formatter/linter 不通过时优先使用 `just fix` 自动修复, 不要手动改
-发版前更新 `CHANGELOG.md`: 官方版本只用 `just bump`, 自定义分支用 `just bump-fork E<major>.<minor>` (先 `--dry-run` 预览), 不要手改版本或手打 tag. E 版本必须基于已合入的官方 `vX.Y.0`, 写入 PEP 440 本地段 `X.Y.0+eX.Y`, tag 为 `vEX.Y`, 不 push. Android APP 的版本与 tag 独立, 见 [android.md](docs/dev/android.md)
+发版前更新 `CHANGELOG.md`: 官方版本只用 `just bump`, 自定义分支用 `just bump-fork E<major>.<minor>[.<patch>]` (先 `--dry-run` 预览), 不要手改版本或手打 tag. E 版本必须基于已合入的官方 `vX.Y.0`, 写入 PEP 440 本地段 `X.Y.0+eX.Y[.Z]`, tag 为 `vEX.Y[.Z]`; patch 段只递增 fork 本地段, base 不变, 不要求新的上游 tag. 不 push. Android APP 的版本与 tag 独立, 见 [android.md](docs/dev/android.md)
 
 ## 开发规范
 

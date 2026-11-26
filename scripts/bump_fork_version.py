@@ -4,9 +4,10 @@
 用法::
 
     python scripts/bump_fork_version.py E0.30
-    python scripts/bump_fork_version.py E0.30 --dry-run
+    python scripts/bump_fork_version.py E0.29.1 --dry-run
 
-E0.30 对应 PEP 440 版本 ``0.30.0+e0.30``: base 必须已合入 ``v0.30.0``, 展示 tag 为 ``vE0.30``.
+E0.30 对应 PEP 440 版本 ``0.30.0+e0.30``; E0.29.1 对应 ``0.29.0+e0.29.1``.
+base 必须已合入 ``vX.Y.0``, 展示 tag 为 ``vE<major>.<minor>[.<patch>]``.
 只本地提交与打 tag, 不 push.
 """
 
@@ -36,7 +37,7 @@ from scripts.bump_version import (  # noqa: E402
 )
 from scripts.check_version_consistency import collect, pyproject_version  # noqa: E402
 
-_TARGET = re.compile(r"^E(?P<major>\d+)\.(?P<minor>\d+)$")
+_TARGET = re.compile(r"^E(?P<major>\d+)\.(?P<minor>\d+)(?:\.(?P<patch>\d+))?$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,12 +54,13 @@ class ForkVersion:
 def parse_target(raw: str) -> ForkVersion:
     match = _TARGET.match(raw.strip())
     if match is None:
-        raise BumpError(f"目标格式应为 E<major>.<minor>, 收到: {raw}")
-    major, minor = match.group("major"), match.group("minor")
+        raise BumpError(f"目标格式应为 E<major>.<minor>[.<patch>], 收到: {raw}")
+    major, minor, patch = match.group("major"), match.group("minor"), match.group("patch")
+    suffix = f".{patch}" if patch is not None else ""
     return ForkVersion(
-        display=f"E{major}.{minor}",
+        display=f"E{major}.{minor}{suffix}",
         base=f"{major}.{minor}.0",
-        full=f"{major}.{minor}.0+e{major}.{minor}",
+        full=f"{major}.{minor}.0+e{major}.{minor}{suffix}",
     )
 
 
@@ -131,7 +133,7 @@ def verify_written(root: Path) -> None:
 
 def main(argv: list[str] | None = None, *, root: Path = ROOT) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("target", help="E<major>.<minor>, 例如 E0.30")
+    parser.add_argument("target", help="E<major>.<minor>[.<patch>], 例如 E0.30 或 E0.29.1")
     parser.add_argument("--dry-run", action="store_true", help="只检查并打印目标, 不写文件")
     args = parser.parse_args(argv)
 
